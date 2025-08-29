@@ -15,7 +15,7 @@ async function loadTokens() {
   try {
     const raw = await fs.readFile(TOKENS_PATH, "utf-8");
     return JSON.parse(raw);
-  } catch (_) {
+  } catch {
     return null; // brak pliku = brak tokenów
   }
 }
@@ -23,30 +23,29 @@ async function saveTokens(tokens) {
   await fs.writeFile(TOKENS_PATH, JSON.stringify(tokens, null, 2), "utf-8");
 }
 
-// === OAuth2 klient Google ===
-const scopes = [
-  "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/drive.readonly"
-  // tymczasowo USUŃ "https://www.googleapis.com/auth/gmail.readonly"
-];
+// === OAuth2 klient Google (MUSI być utworzony przed .on("tokens")) ===
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.GOOGLE_REDIRECT_URI
+);
 
-
-// Załaduj tokeny na starcie (jeśli istnieją)
+// Trzymaj tokeny w pamięci procesu
 let userTokens = await loadTokens();
 if (userTokens) {
   oauth2Client.setCredentials(userTokens);
   console.log("🔐 Załadowano tokeny z pliku tokens.json");
 }
 
-// Zapisuj automatycznie nowe tokeny (np. po odświeżeniu)
+// Zapisuj automatycznie nowe/odświeżone tokeny
 oauth2Client.on("tokens", async (tokens) => {
-  // tokens może zawierać access_token i okazjonalnie refresh_token
   userTokens = { ...(userTokens || {}), ...tokens };
   await saveTokens(userTokens);
   console.log("💾 Zapisano zaktualizowane tokeny (on(tokens))");
 });
 
 // === ENDPOINTY ===
+
 
 // Test serwera
 app.get("/", (_req, res) => {
