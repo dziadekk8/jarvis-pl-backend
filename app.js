@@ -30,7 +30,6 @@ const scopes = [
   // tymczasowo USUŃ "https://www.googleapis.com/auth/gmail.readonly"
 ];
 
-);
 
 // Załaduj tokeny na starcie (jeśli istnieją)
 let userTokens = await loadTokens();
