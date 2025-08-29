@@ -1,0 +1,14 @@
+{
+  "name": "jarvis-pl-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "app.js",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "googleapis": "^159.0.0",
+    "node-fetch": "^3.3.2"
+  }
+}
