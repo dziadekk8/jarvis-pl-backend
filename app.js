@@ -24,10 +24,12 @@ async function saveTokens(tokens) {
 }
 
 // === OAuth2 klient Google ===
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
+const scopes = [
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/drive.readonly"
+  // tymczasowo USUŃ "https://www.googleapis.com/auth/gmail.readonly"
+];
+
 );
 
 // Załaduj tokeny na starcie (jeśli istnieją)
