@@ -1,6 +1,5 @@
 // app.js
 import express from "express";
-import session from "express-session";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -16,16 +15,6 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const TZ = "Europe/Warsaw";
 const TOKEN_PATH = path.join(__dirname, "tokens.json");
-
-// ── MIDDLEWARE ─────────────────────────────────────────────────────
-app.use(express.json()); // potrzebne do POST /gmail/send
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "secret",
-    resave: false,
-    saveUninitialized: true,
-  })
-);
 
 // ── GOOGLE OAUTH2 ──────────────────────────────────────────────────
 // Uwaga: mamy uprawnienia do: Kalendarz (read), Gmail (read + send), Drive (metadata read)
