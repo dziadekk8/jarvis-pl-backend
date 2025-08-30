@@ -164,6 +164,35 @@ app.get("/calendar/event", async (req, res) => {
     console.error(err);
     res.status(500).send("❌ Błąd przy pobieraniu szczegółów wydarzenia.");
   }
+  // Nowa wersja JSON (z ID)
+app.get("/calendar/events/json", async (_req, res) => {
+  try {
+    if (!userTokens) return res.send("❌ Brak tokenów. Najpierw /oauth2/start.");
+    oauth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    const now = new Date().toISOString();
+    const response = await calendar.events.list({
+      calendarId: "primary",
+      timeMin: now,
+      maxResults: 10,
+      singleEvents: true,
+      orderBy: "startTime"
+    });
+
+    const events = (response.data.items || []).map(e => ({
+      id: e.id,
+      summary: e.summary || "(brak tytułu)",
+      start: e.start?.dateTime || e.start?.date || null
+    }));
+
+    res.json({ events });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("❌ Błąd przy pobieraniu wydarzeń (JSON).");
+  }
+});
+
 });
   }
   // 4a) Lista wydarzeń w JSON (z ID)
