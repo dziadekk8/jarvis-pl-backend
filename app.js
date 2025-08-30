@@ -67,6 +67,22 @@ app.get("/auth/status", async (_req, res) => {
   const hasRefresh = Boolean(userTokens.refresh_token);
   res.send(`🟢 Tokeny obecne. refresh_token: ${hasRefresh ? "TAK" : "NIE"}`);
 });
+// Reset tokenów (usuwa zapisany plik tokens.json)
+app.get("/auth/reset", (req, res) => {
+  try {
+    if (fs.existsSync(TOKEN_PATH)) {
+      fs.unlinkSync(TOKEN_PATH);
+      userTokens = null; // wyczyść też zmienną w pamięci
+      return res.send("✅ tokens.json usunięty. Zrób teraz nowe logowanie: /oauth2/start");
+    } else {
+      return res.send("ℹ️ tokens.json nie istnieje.");
+    }
+  } catch (err) {
+    console.error("Błąd przy usuwaniu tokenów:", err);
+    res.status(500).send("❌ Błąd przy usuwaniu tokenów.");
+  }
+});
+
 
 // Wylogowanie (usuń tokeny)
 app.get("/auth/logout", async (_req, res) => {
