@@ -208,21 +208,25 @@ app.get("/calendar/today", async (_req, res) => {
     const { timeMin, timeMax } = isoDayRange(0);
     const r = await calendar.events.list({
       calendarId: "primary",
-      timeMin, timeMax,
-      singleEvents: true, orderBy: "startTime", timeZone: TZ
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 20, // bezpieczny limit
     });
+
     const items = r.data.items || [];
     if (items.length === 0) return res.send("📅 Dziś brak wydarzeń.");
 
     const out = items.map(e => {
-      const s = e.start?.dateTime || e.start?.date;
-      const t = e.end?.dateTime || e.end?.date;
-      return `• ${e.summary || "(brak tytułu)"} — ${fmtRange(s, t)}`;
+      const s = e.start?.dateTime || e.start?.date || null;
+      const t = e.end?.dateTime   || e.end?.date   || null;
+      return `• ${e.summary || "(brak tytułu)"} — ${s && t ? fmtRange(s,t) : (s ? fmtDate(s) : "brak daty")}`;
     });
     res.send("📅 Dzisiaj:\n" + out.join("\n"));
   } catch (e) {
-    console.error(e);
-    res.status(500).send("❌ Błąd /calendar/today");
+    console.error("ERR /calendar/today:", e?.message || e);
+    res.status(500).send("❌ Błąd /calendar/today: " + (e?.message || "nieznany"));
   }
 });
 
@@ -236,21 +240,25 @@ app.get("/calendar/tomorrow", async (_req, res) => {
     const { timeMin, timeMax } = isoDayRange(1);
     const r = await calendar.events.list({
       calendarId: "primary",
-      timeMin, timeMax,
-      singleEvents: true, orderBy: "startTime", timeZone: TZ
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 20,
     });
+
     const items = r.data.items || [];
     if (items.length === 0) return res.send("📅 Jutro brak wydarzeń.");
 
     const out = items.map(e => {
-      const s = e.start?.dateTime || e.start?.date;
-      const t = e.end?.dateTime || e.end?.date;
-      return `• ${e.summary || "(brak tytułu)"} — ${fmtRange(s, t)}`;
+      const s = e.start?.dateTime || e.start?.date || null;
+      const t = e.end?.dateTime   || e.end?.date   || null;
+      return `• ${e.summary || "(brak tytułu)"} — ${s && t ? fmtRange(s,t) : (s ? fmtDate(s) : "brak daty")}`;
     });
     res.send("📅 Jutro:\n" + out.join("\n"));
   } catch (e) {
-    console.error(e);
-    res.status(500).send("❌ Błąd /calendar/tomorrow");
+    console.error("ERR /calendar/tomorrow:", e?.message || e);
+    res.status(500).send("❌ Błąd /calendar/tomorrow: " + (e?.message || "nieznany"));
   }
 });
 
