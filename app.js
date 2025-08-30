@@ -333,7 +333,7 @@ app.get("/drive/search", async (req, res) => {
   }
 });
 
-// ── ROUTES: PLACES (Google Places API) ─────────────────────────────
+// ── ROUTES: PLACES (Google Places API – NEW) ───────────────────────
 app.get("/places/search", async (req, res) => {
   try {
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
@@ -347,45 +347,71 @@ app.get("/places/search", async (req, res) => {
       q = "",
       lat = 52.2297,
       lng = 21.0122,
-      radius = 3000,
-      pageToken // opcjonalnie, do paginacji
+      radius = 3000 // metry
     } = req.query;
 
-    // Użyjemy Text Search z biasem lokalizacji i radius
-    const params = new URLSearchParams({
-      query: String(q),
-      location: `${lat},${lng}`,
-      radius: String(radius),
-      key: apiKey,
-      language: "pl"
+    const url = "https://places.googleapis.com/v1/places:searchText";
+
+    // Pola, które chcemy dostać (FieldMask - wymagane w Places API New)
+    const fieldMask = [
+      "places.id",
+      "places.displayName",
+      "places.formattedAddress",
+      "places.location",
+      "places.rating",
+      "places.userRatingCount",
+      "places.types",
+      "places.currentOpeningHours.weekdayDescriptions",
+      "places.nationalPhoneNumber",
+      "places.websiteUri"
+    ].join(",");
+
+    const body = {
+      textQuery: String(q),
+      languageCode: "pl",
+      locationBias: {
+        circle: {
+          center: { latitude: Number(lat), longitude: Number(lng) },
+          radius: Number(radius)
+        }
+      }
+    };
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": fieldMask
+      },
+      body: JSON.stringify(body)
     });
-    if (pageToken) params.set("pagetoken", String(pageToken));
 
-    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`;
-
-    const resp = await fetch(url);
     const data = await resp.json();
 
-    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+    if (!resp.ok) {
       return res.status(502).json({
-        error: "Błąd Google Places",
-        status: data.status,
-        message: data.error_message || null
+        error: "Błąd Google Places (New)",
+        status: resp.status,
+        message: data?.error?.message || null
       });
     }
 
-    const results = (data.results || []).slice(0, 10).map((p) => ({
-      place_id: p.place_id,
-      name: p.name,
-      address: p.formatted_address,
+    const results = (data.places || []).map((p) => ({
+      // Uwaga: w nowym API ID ma postać "places/XXXX"
+      place_name: p.id || null, // np. "places/ChIJ..."
+      displayName: p.displayName?.text || null,
+      address: p.formattedAddress || null,
       rating: p.rating ?? null,
-      user_ratings_total: p.user_ratings_total ?? null,
-      open_now: p.opening_hours?.open_now ?? null,
+      user_ratings_total: p.userRatingCount ?? null,
+      phone: p.nationalPhoneNumber || null,
+      website: p.websiteUri || null,
+      open_weekdays: p.currentOpeningHours?.weekdayDescriptions || [],
       location: {
-        lat: p.geometry?.location?.lat ?? null,
-        lng: p.geometry?.location?.lng ?? null
+        lat: p.location?.latitude ?? null,
+        lng: p.location?.longitude ?? null
       },
-      types: p.types ?? []
+      types: p.types || []
     }));
 
     res.json({
@@ -393,20 +419,19 @@ app.get("/places/search", async (req, res) => {
       lat: Number(lat),
       lng: Number(lng),
       radius: Number(radius),
-      next_page_token: data.next_page_token || null,
       results
     });
   } catch (e) {
-    console.error("Places error:", e);
-    res.status(500).json({ error: "Błąd wyszukiwania miejsc" });
+    console.error("Places NEW search error:", e);
+    res.status(500).json({ error: "Błąd wyszukiwania miejsc (New API)" });
   }
 });
 
-// Szczegóły miejsca (Google Places Details API)
+// Szczegóły miejsca (Google Places API – NEW)
 app.get("/places/details", async (req, res) => {
   try {
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    const { place_id } = req.query;
+    let { place_id } = req.query; // UWAGA: w New API to tak naprawdę "resource name"
 
     if (!apiKey) {
       return res
@@ -417,61 +442,67 @@ app.get("/places/details", async (req, res) => {
       return res.status(400).json({ error: "Brak parametru place_id" });
     }
 
-    const params = new URLSearchParams({
-      place_id: String(place_id),
-      key: apiKey,
-      language: "pl",
-      fields: [
-        "place_id",
-        "name",
-        "formatted_address",
-        "formatted_phone_number",
-        "international_phone_number",
-        "opening_hours",
-        "website",
-        "rating",
-        "user_ratings_total",
-        "geometry",
-        "types"
-      ].join(",")
-    });
+    // W Places API New identyfikator ma postać "places/XXXX".
+    // Jeśli użytkownik podał stare ID (bez prefiksu), dodajmy "places/".
+    if (!String(place_id).startsWith("places/")) {
+      place_id = `places/${place_id}`;
+    }
 
-    const url = `https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`;
-    const resp = await fetch(url);
+    const fieldMask = [
+      "id",
+      "displayName",
+      "formattedAddress",
+      "location",
+      "rating",
+      "userRatingCount",
+      "currentOpeningHours.weekdayDescriptions",
+      "nationalPhoneNumber",
+      "internationalPhoneNumber",
+      "websiteUri",
+      "types"
+    ].join(",");
+
+    const url = `https://places.googleapis.com/v1/${encodeURIComponent(
+      place_id
+    )}?languageCode=pl&fields=${encodeURIComponent(fieldMask)}`;
+
+    const resp = await fetch(url, {
+      headers: { "X-Goog-Api-Key": apiKey }
+    });
     const data = await resp.json();
 
-    if (data.status !== "OK") {
+    if (!resp.ok) {
       return res.status(502).json({
-        error: "Błąd Google Places Details",
-        status: data.status,
-        message: data.error_message || null
+        error: "Błąd Google Places Details (New)",
+        status: resp.status,
+        message: data?.error?.message || null
       });
     }
 
-    const p = data.result || {};
+    const p = data || {};
     const details = {
-      place_id: p.place_id,
-      name: p.name,
-      address: p.formatted_address,
-      phone: p.formatted_phone_number || p.international_phone_number || null,
-      website: p.website || null,
+      place_name: p.id || null, // "places/XXXX"
+      name: p.displayName?.text || null,
+      address: p.formattedAddress || null,
+      phone: p.nationalPhoneNumber || p.internationalPhoneNumber || null,
+      website: p.websiteUri || null,
       rating: p.rating ?? null,
-      user_ratings_total: p.user_ratings_total ?? null,
-      open_now: p.opening_hours?.open_now ?? null,
-      weekday_text: p.opening_hours?.weekday_text || [],
+      user_ratings_total: p.userRatingCount ?? null,
+      open_weekdays: p.currentOpeningHours?.weekdayDescriptions || [],
       location: {
-        lat: p.geometry?.location?.lat ?? null,
-        lng: p.geometry?.location?.lng ?? null
+        lat: p.location?.latitude ?? null,
+        lng: p.location?.longitude ?? null
       },
-      types: p.types ?? []
+      types: p.types || []
     };
 
     res.json(details);
   } catch (e) {
-    console.error("Places details error:", e);
-    res.status(500).json({ error: "Błąd pobierania szczegółów miejsca" });
+    console.error("Places NEW details error:", e);
+    res.status(500).json({ error: "Błąd pobierania szczegółów miejsca (New API)" });
   }
 });
+
 
 // ── START ──────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {
