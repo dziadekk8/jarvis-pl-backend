@@ -31,6 +31,18 @@ app.use(express.json());
 app.get("/", (_req, res) => res.send("OK"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// Debug: pokaż zarejestrowane trasy
+app.get("/debug/routes", (_req, res) => {
+  const routes =
+    app._router?.stack
+      ?.filter((r) => r.route && r.route.path)
+      ?.map((r) => ({
+        method: Object.keys(r.route.methods)[0]?.toUpperCase(),
+        path: r.route.path,
+      })) || [];
+  res.json(routes);
+});
+
 // ── GOOGLE OAUTH2 ──────────────────────────────────────────────────
 // Uwaga: mamy uprawnienia do: Kalendarz (read), Gmail (read + send), Drive (metadata read)
 const SCOPES = [
@@ -104,27 +116,51 @@ const fmtDate = (iso) => {
   }
 };
 
-// Gmail: budowa surowej wiadomości (MIME) i kodowanie base64url
-function buildRawEmail({ to, subject, text, from }) {
-  const headers = [
+// Gmail: budowa surowej wiadomości (MIME) i kodowanie base64url – HTML + plain text
+function buildRawEmail({ to, subject, text, html, from }) {
+  const encSubject = subject
+    ? `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`
+    : "";
+
+  const fallbackText =
+    text ||
+    (html ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
+
+  const boundary = "bndry_" + Date.now().toString(36);
+
+  const mime = [
     `To: ${to}`,
     from ? `From: ${from}` : "",
-    `Subject: ${subject}`,
+    `Subject: ${encSubject}`,
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=UTF-8",
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     "",
-    text || "",
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    fallbackText || "",
+    "",
+    `--${boundary}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    html ||
+      `<html><body><pre style="font-family: inherit">${(text || "")
+        .replace(/</g, "&lt;")
+        .trim()}</pre></body></html>`,
+    "",
+    `--${boundary}--`,
+    "",
   ]
-    .filter(Boolean)
+    .filter((l) => l !== null && l !== undefined)
     .join("\r\n");
 
-  const base64 = Buffer.from(headers, "utf-8")
+  return Buffer.from(mime, "utf-8")
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
-
-  return base64;
 }
 
 // ── ROUTES: AUTH ────────────────────────────────────────────────────
@@ -167,18 +203,17 @@ app.get("/auth/tokeninfo", async (_req, res) => {
     }
     const oauth2 = google.oauth2({ version: "v2", auth: oAuth2Client });
     const info = await oauth2.tokeninfo({ access_token: userTokens.access_token });
-    // Zwracamy tylko to co potrzebne (scope’y, expiry itd.)
     return res.json({
       scopes: (info.data?.scope || "").split(" "),
       expires_in: info.data?.expires_in,
       issued_to: info.data?.issued_to,
-      audience: info.data?.audience
+      audience: info.data?.audience,
     });
   } catch (e) {
     console.error("tokeninfo error:", e?.response?.data || e);
     return res.status(500).json({
       error: "Nie można pobrać tokeninfo",
-      details: e?.response?.data?.error_description || e?.message || "unknown"
+      details: e?.response?.data?.error_description || e?.message || "unknown",
     });
   }
 });
@@ -203,7 +238,7 @@ app.get("/calendar/events/json", async (_req, res) => {
     if (!userTokens) {
       return res.status(401).json({
         error: "Brak autoryzacji",
-        fix: "Przejdź /oauth2/start, a jeśli wcześniej autoryzowałaś/eś bez Kalendarza → /auth/reset i ponownie /oauth2/start"
+        fix: "Przejdź /oauth2/start, a jeśli wcześniej autoryzowałaś/eś bez Kalendarza → /auth/reset i ponownie /oauth2/start",
       });
     }
 
@@ -224,17 +259,16 @@ app.get("/calendar/events/json", async (_req, res) => {
 
     return res.json({ events: result });
   } catch (e) {
-    // Bardzo czytelny log do Render Logs
     console.error("calendar/events error:", e?.response?.data || e);
     const status = e?.response?.status || e?.code || 500;
     return res.status(Number.isInteger(status) ? status : 500).json({
       error: "Błąd pobierania wydarzeń",
       details: e?.response?.data?.error?.message || e?.message || "unknown",
-      hint: "Najczęściej: brak scope calendar.readonly, nieważny token, wyłączone Calendar API. Spróbuj /auth/reset → /oauth2/start."
+      hint:
+        "Najczęściej: brak scope calendar.readonly, nieważny token, wyłączone Calendar API. Spróbuj /auth/reset → /oauth2/start.",
     });
   }
 });
-
 
 // Pojedyncze wydarzenie (z lepszą walidacją i 404)
 app.get("/calendar/event", async (req, res) => {
@@ -243,8 +277,9 @@ app.get("/calendar/event", async (req, res) => {
   if (!id || /^TU_WKLEJ_ID$/i.test(id)) {
     return res.status(400).json({
       error: "Brak poprawnego parametru ?id",
-      hint: "Najpierw wywołaj /calendar/events/json i skopiuj pole 'id' z któregoś wydarzenia.",
-      example: "/calendar/event?id=7k2q3l8f9n3p4t..."
+      hint:
+        "Najpierw wywołaj /calendar/events/json i skopiuj pole 'id' z któregoś wydarzenia.",
+      example: "/calendar/event?id=7k2q3l8f9n3p4t...",
     });
   }
 
@@ -260,10 +295,61 @@ app.get("/calendar/event", async (req, res) => {
       return res.status(404).json({
         error: "Wydarzenie nie znalezione",
         id,
-        hint: "Upewnij się, że ID pochodzi z /calendar/events/json i należy do kalendarza 'primary'."
+        hint:
+          "Upewnij się, że ID pochodzi z /calendar/events/json i należy do kalendarza 'primary'.",
       });
     }
     return res.status(500).json({ error: "Błąd pobierania wydarzenia" });
+  }
+});
+
+// Dzisiejsze wydarzenia
+app.get("/calendar/today", async (_req, res) => {
+  try {
+    const { timeMin, timeMax } = isoDayRange(0);
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const events = await calendar.events.list({
+      calendarId: "primary",
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: "startTime",
+    });
+    const result = (events.data.items || []).map((ev) => {
+      const startISO = ev.start?.dateTime || ev.start?.date || null;
+      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(
+        startISO
+      )})`;
+    });
+    res.json({ today: result });
+  } catch (e) {
+    console.error("calendar/today error:", e?.response?.data || e);
+    res.status(500).json({ error: "Błąd /calendar/today" });
+  }
+});
+
+// Jutrzejsze wydarzenia
+app.get("/calendar/tomorrow", async (_req, res) => {
+  try {
+    const { timeMin, timeMax } = isoDayRange(1);
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const events = await calendar.events.list({
+      calendarId: "primary",
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: "startTime",
+    });
+    const result = (events.data.items || []).map((ev) => {
+      const startISO = ev.start?.dateTime || ev.start?.date || null;
+      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(
+        startISO
+      )})`;
+    });
+    res.json({ tomorrow: result });
+  } catch (e) {
+    console.error("calendar/tomorrow error:", e?.response?.data || e);
+    res.status(500).json({ error: "Błąd /calendar/tomorrow" });
   }
 });
 
@@ -278,7 +364,6 @@ app.get("/gmail/messages", async (req, res) => {
       maxResults: 10,
     });
 
-    // dociągniemy headery Temat/Nadawca
     const items = resp.data.messages || [];
     const details = [];
     for (const m of items) {
@@ -290,7 +375,8 @@ app.get("/gmail/messages", async (req, res) => {
       });
       const headers = msg.data.payload?.headers || [];
       const pick = (name) =>
-        headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || "";
+        headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ||
+        "";
       details.push({
         id: m.id,
         snippet: msg.data.snippet,
@@ -306,15 +392,15 @@ app.get("/gmail/messages", async (req, res) => {
   }
 });
 
-// Wysyłka maila: POST /gmail/send  { to, subject, text, [from] }
+// Wysyłka maila: POST /gmail/send  { to, subject, text, html, [from] }
 app.post("/gmail/send", async (req, res) => {
-  const { to, subject, text, from } = req.body || {};
+  const { to, subject, text, html, from } = req.body || {};
   if (!to || !subject) {
     return res.status(400).json({ error: "Wymagane pola: to, subject" });
   }
   try {
     const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
-    const raw = buildRawEmail({ to, subject, text, from });
+    const raw = buildRawEmail({ to, subject, text, html, from });
     const sendResp = await gmail.users.messages.send({
       userId: "me",
       requestBody: { raw },
@@ -357,7 +443,7 @@ app.get("/places/search", async (req, res) => {
       q = "",
       lat = 52.2297,
       lng = 21.0122,
-      radius = 3000 // metry
+      radius = 3000, // metry
     } = req.query;
 
     const url = "https://places.googleapis.com/v1/places:searchText";
@@ -373,7 +459,7 @@ app.get("/places/search", async (req, res) => {
       "places.types",
       "places.currentOpeningHours.weekdayDescriptions",
       "places.nationalPhoneNumber",
-      "places.websiteUri"
+      "places.websiteUri",
     ].join(",");
 
     const body = {
@@ -382,9 +468,9 @@ app.get("/places/search", async (req, res) => {
       locationBias: {
         circle: {
           center: { latitude: Number(lat), longitude: Number(lng) },
-          radius: Number(radius)
-        }
-      }
+          radius: Number(radius),
+        },
+      },
     };
 
     const resp = await fetch(url, {
@@ -392,9 +478,9 @@ app.get("/places/search", async (req, res) => {
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": fieldMask
+        "X-Goog-FieldMask": fieldMask,
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
 
     const data = await resp.json();
@@ -403,7 +489,7 @@ app.get("/places/search", async (req, res) => {
       return res.status(502).json({
         error: "Błąd Google Places (New)",
         status: resp.status,
-        message: data?.error?.message || null
+        message: data?.error?.message || null,
       });
     }
 
@@ -419,9 +505,9 @@ app.get("/places/search", async (req, res) => {
       open_weekdays: p.currentOpeningHours?.weekdayDescriptions || [],
       location: {
         lat: p.location?.latitude ?? null,
-        lng: p.location?.longitude ?? null
+        lng: p.location?.longitude ?? null,
       },
-      types: p.types || []
+      types: p.types || [],
     }));
 
     res.json({
@@ -429,7 +515,7 @@ app.get("/places/search", async (req, res) => {
       lat: Number(lat),
       lng: Number(lng),
       radius: Number(radius),
-      results
+      results,
     });
   } catch (e) {
     console.error("Places NEW search error:", e);
@@ -469,7 +555,7 @@ app.get("/places/details", async (req, res) => {
       "nationalPhoneNumber",
       "internationalPhoneNumber",
       "websiteUri",
-      "types"
+      "types",
     ].join(",");
 
     const url = `https://places.googleapis.com/v1/${encodeURIComponent(
@@ -477,7 +563,7 @@ app.get("/places/details", async (req, res) => {
     )}?languageCode=pl&fields=${encodeURIComponent(fieldMask)}`;
 
     const resp = await fetch(url, {
-      headers: { "X-Goog-Api-Key": apiKey }
+      headers: { "X-Goog-Api-Key": apiKey },
     });
     const data = await resp.json();
 
@@ -485,7 +571,7 @@ app.get("/places/details", async (req, res) => {
       return res.status(502).json({
         error: "Błąd Google Places Details (New)",
         status: resp.status,
-        message: data?.error?.message || null
+        message: data?.error?.message || null,
       });
     }
 
@@ -501,9 +587,9 @@ app.get("/places/details", async (req, res) => {
       open_weekdays: p.currentOpeningHours?.weekdayDescriptions || [],
       location: {
         lat: p.location?.latitude ?? null,
-        lng: p.location?.longitude ?? null
+        lng: p.location?.longitude ?? null,
       },
-      types: p.types || []
+      types: p.types || [],
     };
 
     res.json(details);
@@ -512,7 +598,6 @@ app.get("/places/details", async (req, res) => {
     res.status(500).json({ error: "Błąd pobierania szczegółów miejsca (New API)" });
   }
 });
-
 
 // ── START ──────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {
