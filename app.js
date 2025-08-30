@@ -5,6 +5,7 @@ import fetch from "node-fetch";
 import fs from "fs/promises";
 
 dotenv.config();
+app.use(express.json());
 console.log("DEBUG REDIRECT_URI =", process.env.GOOGLE_REDIRECT_URI);
 
 
@@ -105,7 +106,32 @@ app.get("/oauth2/callback", async (req, res) => {
   }
 });
 
-// === Google Calendar: wydarzenia ===
+// --- Pomocnicze formatowanie czasu (PL, Europe/Warsaw) ---
+const TZ = "Europe/Warsaw";
+const fmtDate = (iso) => {
+  if (!iso) return "brak";
+  const d = new Date(iso);
+  return new Intl.DateTimeFormat("pl-PL", { timeZone: TZ, dateStyle: "long" }).format(d);
+};
+const fmtTime = (iso) => {
+  if (!iso) return "brak";
+  const d = new Date(iso);
+  return new Intl.DateTimeFormat("pl-PL", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }).format(d);
+};
+const fmtRange = (startIso, endIso) => `${fmtDate(startIso)}, ${fmtTime(startIso)} – ${fmtTime(endIso)}`;
+
+function isoDayRange(offsetDays = 0) {
+  // Zakres dnia w TZ (Warszawa) jako ISO
+  const now = new Date();
+  const inTZ = new Date(now.toLocaleString("en-CA", { timeZone: TZ }));
+  inTZ.setHours(0, 0, 0, 0);
+  inTZ.setDate(inTZ.getDate() + offsetDays);
+  const start = new Date(inTZ);
+  const end = new Date(inTZ);
+  end.setDate(end.getDate() + 1);
+  return { timeMin: start.toISOString(), timeMax: end.toISOString() };
+}
+
 // === Google Calendar: wydarzenia ===
 app.get("/calendar/events", async (_req, res) => {
   try {
@@ -119,27 +145,30 @@ app.get("/calendar/events", async (_req, res) => {
       timeMin: now,
       maxResults: 5,
       singleEvents: true,
-      orderBy: "startTime"
+      orderBy: "startTime",
+      timeZone: TZ
     });
 
     const events = response.data.items || [];
     if (events.length === 0) return res.send("📅 Brak nadchodzących wydarzeń.");
 
-    const lista = events.map(ev => {
-      const start = ev.start?.dateTime || ev.start?.date || "brak";
-      return `- ${ev.summary || "(brak tytułu)"} (${start})`;
+    const lista = events.map(e => {
+      const s = e.start?.dateTime || e.start?.date || null;
+      const t = e.end?.dateTime || e.end?.date || null;
+      const line = (s && t) ? fmtRange(s, t) : (s ? fmtDate(s) : "brak daty");
+      return `• ${e.summary || "(brak tytułu)"} — ${line}`;
     });
     res.send("📅 Nadchodzące wydarzenia:\n" + lista.join("\n"));
   } catch (err) {
     console.error(err);
-    res.send("❌ Błąd przy pobieraniu wydarzeń.");
+    res.status(500).send("❌ Błąd przy pobieraniu wydarzeń.");
   }
 });
 
-// 4a) Lista wydarzeń w JSON (z ID)
+// JSON z ID (dla GPT)
 app.get("/calendar/events/json", async (_req, res) => {
   try {
-    if (!userTokens) return res.send("❌ Brak tokenów. Najpierw /oauth2/start.");
+    if (!userTokens) return res.json({ events: [] });
     oauth2Client.setCredentials(userTokens);
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
@@ -149,56 +178,174 @@ app.get("/calendar/events/json", async (_req, res) => {
       timeMin: now,
       maxResults: 10,
       singleEvents: true,
-      orderBy: "startTime"
+      orderBy: "startTime",
+      timeZone: TZ
     });
 
     const events = (response.data.items || []).map(e => ({
       id: e.id,
       summary: e.summary || "(brak tytułu)",
-      start: e.start?.dateTime || e.start?.date || null
+      start: e.start?.dateTime || e.start?.date || null,
+      end: e.end?.dateTime || e.end?.date || null
     }));
-
     res.json({ events });
   } catch (err) {
     console.error(err);
-    res.status(500).send("❌ Błąd przy pobieraniu wydarzeń (JSON).");
+    res.status(500).json({ error: "❌ Błąd przy pobieraniu wydarzeń (JSON)." });
   }
 });
 
-// 4b) Szczegóły jednego wydarzenia po ID
-app.get("/calendar/event", async (req, res) => {
+// DZISIAJ (ładny tekst)
+app.get("/calendar/today", async (_req, res) => {
   try {
     if (!userTokens) return res.send("❌ Brak tokenów. Najpierw /oauth2/start.");
     oauth2Client.setCredentials(userTokens);
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
+    const { timeMin, timeMax } = isoDayRange(0);
+    const r = await calendar.events.list({
+      calendarId: "primary",
+      timeMin, timeMax,
+      singleEvents: true, orderBy: "startTime", timeZone: TZ
+    });
+    const items = r.data.items || [];
+    if (items.length === 0) return res.send("📅 Dziś brak wydarzeń.");
+
+    const out = items.map(e => {
+      const s = e.start?.dateTime || e.start?.date;
+      const t = e.end?.dateTime || e.end?.date;
+      return `• ${e.summary || "(brak tytułu)"} — ${fmtRange(s, t)}`;
+    });
+    res.send("📅 Dzisiaj:\n" + out.join("\n"));
+  } catch (e) {
+    console.error(e);
+    res.status(500).send("❌ Błąd /calendar/today");
+  }
+});
+
+// JUTRO (ładny tekst)
+app.get("/calendar/tomorrow", async (_req, res) => {
+  try {
+    if (!userTokens) return res.send("❌ Brak tokenów. Najpierw /oauth2/start.");
+    oauth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    const { timeMin, timeMax } = isoDayRange(1);
+    const r = await calendar.events.list({
+      calendarId: "primary",
+      timeMin, timeMax,
+      singleEvents: true, orderBy: "startTime", timeZone: TZ
+    });
+    const items = r.data.items || [];
+    if (items.length === 0) return res.send("📅 Jutro brak wydarzeń.");
+
+    const out = items.map(e => {
+      const s = e.start?.dateTime || e.start?.date;
+      const t = e.end?.dateTime || e.end?.date;
+      return `• ${e.summary || "(brak tytułu)"} — ${fmtRange(s, t)}`;
+    });
+    res.send("📅 Jutro:\n" + out.join("\n"));
+  } catch (e) {
+    console.error(e);
+    res.status(500).send("❌ Błąd /calendar/tomorrow");
+  }
+});
+
+// Szczegóły jednego wydarzenia (JSON)
+app.get("/calendar/event", async (req, res) => {
+  try {
+    if (!userTokens) return res.status(401).json({ error: "Brak tokenów" });
+    oauth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
     const id = String(req.query.id || "").trim();
-    if (!id) return res.status(400).send("⚠️ Podaj ?id=ID_wydarzenia");
+    if (!id) return res.status(400).json({ error: "Podaj ?id=..." });
 
     const ev = await calendar.events.get({ calendarId: "primary", eventId: id });
     const e = ev.data;
-
-    const start = e.start?.dateTime || e.start?.date || "brak";
-    const end = e.end?.dateTime || e.end?.date || "brak";
-    const loc = e.location || "brak";
-    const desc = (e.description || "brak").slice(0, 1500);
-
     res.json({
       id: e.id,
       summary: e.summary || "(brak tytułu)",
-      start, end,
-      location: loc,
-      attendees: (e.attendees || []).map(a => ({
-        email: a.email, responseStatus: a.responseStatus
-      })),
+      start: e.start?.dateTime || e.start?.date || "brak",
+      end: e.end?.dateTime || e.end?.date || "brak",
+      location: e.location || "brak",
+      attendees: (e.attendees || []).map(a => ({ email: a.email, responseStatus: a.responseStatus })),
       hangoutLink: e.hangoutLink || null,
-      description: desc
+      description: e.description || "brak"
     });
   } catch (err) {
     console.error(err);
-    res.status(500).send("❌ Błąd przy pobieraniu szczegółów wydarzenia.");
+    res.status(500).json({ error: "❌ Błąd przy pobieraniu szczegółów wydarzenia." });
   }
 });
+
+// UTWÓRZ wydarzenie (POST JSON)
+app.post("/calendar/create", async (req, res) => {
+  try {
+    if (!userTokens) return res.status(401).json({ error: "Brak tokenów" });
+    oauth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    const { title, start, end, location, description, reminderMinutes } = req.body || {};
+    if (!title || !start || !end) {
+      return res.status(400).json({ error: "Wymagane: title, start, end (ISO, np. 2025-09-01T09:00:00+02:00)" });
+    }
+
+    const event = {
+      summary: title,
+      location: location || undefined,
+      description: description || undefined,
+      start: { dateTime: start, timeZone: TZ },
+      end:   { dateTime: end,   timeZone: TZ },
+      reminders: reminderMinutes ? {
+        useDefault: false,
+        overrides: [{ method: "popup", minutes: Number(reminderMinutes) }]
+      } : undefined
+    };
+
+    const created = await calendar.events.insert({ calendarId: "primary", requestBody: event });
+    res.json({
+      ok: true,
+      id: created.data.id,
+      htmlLink: created.data.htmlLink,
+      when: fmtRange(start, end)
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "❌ Błąd przy tworzeniu wydarzenia." });
+  }
+});
+
+// Aktualizacja tytułu/przypomnienia
+app.post("/calendar/event/update", async (req, res) => {
+  try {
+    if (!userTokens) return res.status(401).json({ error: "Brak tokenów" });
+    oauth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    const { id, title, reminderMinutes } = req.body || {};
+    if (!id) return res.status(400).json({ error: "Wymagane: id" });
+
+    // pobierz istniejące
+    const ev = await calendar.events.get({ calendarId: "primary", eventId: id });
+    const e = ev.data;
+
+    if (title) e.summary = title;
+    if (reminderMinutes !== undefined) {
+      e.reminders = {
+        useDefault: false,
+        overrides: [{ method: "popup", minutes: Number(reminderMinutes) }]
+      };
+    }
+
+    const updated = await calendar.events.update({ calendarId: "primary", eventId: id, requestBody: e });
+    res.json({ ok: true, id, summary: updated.data.summary });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "❌ Błąd przy aktualizacji wydarzenia." });
+  }
+});
+
 
 // === Gmail: listowanie wiadomości ===
 app.get("/gmail/messages", async (req, res) => {
