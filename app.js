@@ -8,6 +8,14 @@ import { google } from "googleapis";
 
 dotenv.config();
 
+// --- Globalne łapacze błędów / logi startowe ---
+process.on("uncaughtException", (err) => {
+  console.error("❌ uncaughtException:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ unhandledRejection:", reason);
+});
+
 // ── ŚCIEŻKI I PODSTAWY ──────────────────────────────────────────────
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +23,13 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const TZ = "Europe/Warsaw";
 const TOKEN_PATH = path.join(__dirname, "tokens.json");
+
+// Body parser do POST /gmail/send
+app.use(express.json());
+
+// Proste endpointy zdrowia
+app.get("/", (_req, res) => res.send("OK"));
+app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ── GOOGLE OAUTH2 ──────────────────────────────────────────────────
 // Uwaga: mamy uprawnienia do: Kalendarz (read), Gmail (read + send), Drive (metadata read)
@@ -253,7 +268,7 @@ app.get("/gmail/messages", async (req, res) => {
       maxResults: 10,
     });
 
-    // dociągniemy headery Temat/Nadawca (opcjonalnie)
+    // dociągniemy headery Temat/Nadawca
     const items = resp.data.messages || [];
     const details = [];
     for (const m of items) {
@@ -281,7 +296,7 @@ app.get("/gmail/messages", async (req, res) => {
   }
 });
 
-// Wysyłka maila: POST /gmail/send  { to, subject, text }
+// Wysyłka maila: POST /gmail/send  { to, subject, text, [from] }
 app.post("/gmail/send", async (req, res) => {
   const { to, subject, text, from } = req.body || {};
   if (!to || !subject) {
@@ -348,7 +363,6 @@ app.get("/places/search", async (req, res) => {
 
     const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`;
 
-    // Node 22 ma globalny fetch — nie potrzebujemy node-fetch
     const resp = await fetch(url);
     const data = await resp.json();
 
@@ -360,7 +374,6 @@ app.get("/places/search", async (req, res) => {
       });
     }
 
-    // Zmapujmy wyniki do czytelnego formatu
     const results = (data.results || []).slice(0, 10).map((p) => ({
       place_id: p.place_id,
       name: p.name,
@@ -387,4 +400,85 @@ app.get("/places/search", async (req, res) => {
     console.error("Places error:", e);
     res.status(500).json({ error: "Błąd wyszukiwania miejsc" });
   }
+});
+
+// Szczegóły miejsca (Google Places Details API)
+app.get("/places/details", async (req, res) => {
+  try {
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    const { place_id } = req.query;
+
+    if (!apiKey) {
+      return res
+        .status(500)
+        .json({ error: "Brak GOOGLE_MAPS_API_KEY w zmiennych środowiskowych (.env)" });
+    }
+    if (!place_id) {
+      return res.status(400).json({ error: "Brak parametru place_id" });
+    }
+
+    const params = new URLSearchParams({
+      place_id: String(place_id),
+      key: apiKey,
+      language: "pl",
+      fields: [
+        "place_id",
+        "name",
+        "formatted_address",
+        "formatted_phone_number",
+        "international_phone_number",
+        "opening_hours",
+        "website",
+        "rating",
+        "user_ratings_total",
+        "geometry",
+        "types"
+      ].join(",")
+    });
+
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.status !== "OK") {
+      return res.status(502).json({
+        error: "Błąd Google Places Details",
+        status: data.status,
+        message: data.error_message || null
+      });
+    }
+
+    const p = data.result || {};
+    const details = {
+      place_id: p.place_id,
+      name: p.name,
+      address: p.formatted_address,
+      phone: p.formatted_phone_number || p.international_phone_number || null,
+      website: p.website || null,
+      rating: p.rating ?? null,
+      user_ratings_total: p.user_ratings_total ?? null,
+      open_now: p.opening_hours?.open_now ?? null,
+      weekday_text: p.opening_hours?.weekday_text || [],
+      location: {
+        lat: p.geometry?.location?.lat ?? null,
+        lng: p.geometry?.location?.lng ?? null
+      },
+      types: p.types ?? []
+    };
+
+    res.json(details);
+  } catch (e) {
+    console.error("Places details error:", e);
+    res.status(500).json({ error: "Błąd pobierania szczegółów miejsca" });
+  }
+});
+
+// ── START ──────────────────────────────────────────────────────────
+const server = app.listen(PORT, () => {
+  console.log(`✅ Serwer nasłuchuje na http://localhost:${PORT}`);
+  console.log("DEBUG REDIRECT_URI =", (process.env.GOOGLE_REDIRECT_URI || "").trim());
+  console.log("MAPS KEY set?:", Boolean(process.env.GOOGLE_MAPS_API_KEY));
+});
+server.on("error", (err) => {
+  console.error("❌ Błąd przy app.listen:", err);
 });
