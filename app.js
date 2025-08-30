@@ -329,15 +329,73 @@ app.get("/drive/search", async (req, res) => {
   }
 });
 
-// ── ROUTES: PLACES (stub) ──────────────────────────────────────────
+// ── ROUTES: PLACES (Google Places API) ─────────────────────────────
 app.get("/places/search", async (req, res) => {
-  const { q, lat = 52.2297, lng = 21.0122, radius = 3000 } = req.query;
-  // Tu można podpiąć prawdziwe Google Places. Na razie echo.
-  res.json({ query: q, lat, lng, radius, results: [] });
-});
+  try {
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      return res
+        .status(500)
+        .json({ error: "Brak GOOGLE_MAPS_API_KEY w zmiennych środowiskowych (.env)" });
+    }
 
-// ── START ──────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`Serwer działa na http://localhost:${PORT}`);
-  console.log("DEBUG REDIRECT_URI =", (process.env.GOOGLE_REDIRECT_URI || "").trim());
+    const {
+      q = "",
+      lat = 52.2297,
+      lng = 21.0122,
+      radius = 3000,
+      pageToken // opcjonalnie, do paginacji
+    } = req.query;
+
+    // Użyjemy Text Search z biasem lokalizacji i radius
+    const params = new URLSearchParams({
+      query: String(q),
+      location: `${lat},${lng}`,
+      radius: String(radius),
+      key: apiKey,
+      language: "pl"
+    });
+    if (pageToken) params.set("pagetoken", String(pageToken));
+
+    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`;
+
+    // Node 22 ma globalny fetch — nie potrzebujemy node-fetch
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+      return res.status(502).json({
+        error: "Błąd Google Places",
+        status: data.status,
+        message: data.error_message || null
+      });
+    }
+
+    // Zmapujmy wyniki do czytelnego formatu
+    const results = (data.results || []).slice(0, 10).map((p) => ({
+      place_id: p.place_id,
+      name: p.name,
+      address: p.formatted_address,
+      rating: p.rating ?? null,
+      user_ratings_total: p.user_ratings_total ?? null,
+      open_now: p.opening_hours?.open_now ?? null,
+      location: {
+        lat: p.geometry?.location?.lat ?? null,
+        lng: p.geometry?.location?.lng ?? null
+      },
+      types: p.types ?? []
+    }));
+
+    res.json({
+      query: q,
+      lat: Number(lat),
+      lng: Number(lng),
+      radius: Number(radius),
+      next_page_token: data.next_page_token || null,
+      results
+    });
+  } catch (e) {
+    console.error("Places error:", e);
+    res.status(500).json({ error: "Błąd wyszukiwania miejsc" });
+  }
 });
