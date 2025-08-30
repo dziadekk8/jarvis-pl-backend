@@ -159,6 +159,30 @@ app.get("/auth/status", async (_req, res) => {
   res.send(`🟢 Tokeny obecne. refresh_token: ${hasRefresh ? "TAK" : "NIE"}`);
 });
 
+// Podgląd scope’ów (jakie uprawnienia ma token)
+app.get("/auth/tokeninfo", async (_req, res) => {
+  try {
+    if (!userTokens?.access_token) {
+      return res.status(400).json({ error: "Brak access_token – zaloguj: /oauth2/start" });
+    }
+    const oauth2 = google.oauth2({ version: "v2", auth: oAuth2Client });
+    const info = await oauth2.tokeninfo({ access_token: userTokens.access_token });
+    // Zwracamy tylko to co potrzebne (scope’y, expiry itd.)
+    return res.json({
+      scopes: (info.data?.scope || "").split(" "),
+      expires_in: info.data?.expires_in,
+      issued_to: info.data?.issued_to,
+      audience: info.data?.audience
+    });
+  } catch (e) {
+    console.error("tokeninfo error:", e?.response?.data || e);
+    return res.status(500).json({
+      error: "Nie można pobrać tokeninfo",
+      details: e?.response?.data?.error_description || e?.message || "unknown"
+    });
+  }
+});
+
 // Reset tokenów (usuwa tokens.json i czyści pamięć)
 app.get("/auth/reset", (req, res) => {
   try {
@@ -176,6 +200,13 @@ app.get("/auth/reset", (req, res) => {
 // ── ROUTES: CALENDAR ───────────────────────────────────────────────
 app.get("/calendar/events/json", async (_req, res) => {
   try {
+    if (!userTokens) {
+      return res.status(401).json({
+        error: "Brak autoryzacji",
+        fix: "Przejdź /oauth2/start, a jeśli wcześniej autoryzowałaś/eś bez Kalendarza → /auth/reset i ponownie /oauth2/start"
+      });
+    }
+
     const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
     const events = await calendar.events.list({
       calendarId: "primary",
@@ -184,17 +215,26 @@ app.get("/calendar/events/json", async (_req, res) => {
       singleEvents: true,
       orderBy: "startTime",
     });
+
     const result = (events.data.items || []).map((ev) => ({
       id: ev.id,
-      summary: ev.summary,
+      summary: ev.summary || "(bez tytułu)",
       start: ev.start?.dateTime || ev.start?.date || null,
     }));
-    res.json({ events: result });
+
+    return res.json({ events: result });
   } catch (e) {
-    console.error(e);
-    res.status(500).send("Błąd pobierania wydarzeń");
+    // Bardzo czytelny log do Render Logs
+    console.error("calendar/events error:", e?.response?.data || e);
+    const status = e?.response?.status || e?.code || 500;
+    return res.status(Number.isInteger(status) ? status : 500).json({
+      error: "Błąd pobierania wydarzeń",
+      details: e?.response?.data?.error?.message || e?.message || "unknown",
+      hint: "Najczęściej: brak scope calendar.readonly, nieważny token, wyłączone Calendar API. Spróbuj /auth/reset → /oauth2/start."
+    });
   }
 });
+
 
 // Pojedyncze wydarzenie (z lepszą walidacją i 404)
 app.get("/calendar/event", async (req, res) => {
