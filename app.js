@@ -25,12 +25,15 @@ async function saveTokens(tokens) {
   await fs.writeFile(TOKENS_PATH, JSON.stringify(tokens, null, 2), "utf-8");
 }
 
-// === OAuth2 klient Google (MUSI być utworzony przed .on("tokens")) ===
+const redirectUri = (process.env.GOOGLE_REDIRECT_URI || "").trim();
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
+  redirectUri
 );
+
+console.log("DEBUG REDIRECT_URI =", redirectUri);
 
 // Trzymaj tokeny w pamięci procesu
 let userTokens = await loadTokens();
