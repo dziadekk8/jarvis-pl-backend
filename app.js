@@ -5,6 +5,8 @@ import fetch from "node-fetch";
 import fs from "fs/promises";
 
 dotenv.config();
+console.log("DEBUG REDIRECT_URI =", process.env.GOOGLE_REDIRECT_URI);
+
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -72,16 +74,18 @@ app.get("/auth/logout", async (_req, res) => {
 app.get("/oauth2/start", (_req, res) => {
   const scopes = [
     "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/drive.readonly"
+    // "https://www.googleapis.com/auth/gmail.readonly"
   ];
   const url = oauth2Client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
     scope: scopes
   });
+  console.log("DEBUG AUTH_URL =", url);
   res.redirect(url);
 });
+
 
 // Callback po logowaniu — zapisz tokeny do pliku
 app.get("/oauth2/callback", async (req, res) => {
