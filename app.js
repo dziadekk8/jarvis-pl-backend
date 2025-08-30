@@ -24,8 +24,9 @@ const PORT = process.env.PORT || 8080;
 const TZ = "Europe/Warsaw";
 const TOKEN_PATH = path.join(__dirname, "tokens.json");
 
-// Body parser do POST /gmail/send
-app.use(express.json());
+// Body parser do POST /gmail/send (większy limit na załączniki)
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
 // Proste endpointy zdrowia
 app.get("/", (_req, res) => res.send("OK"));
