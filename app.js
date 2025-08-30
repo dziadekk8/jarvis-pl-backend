@@ -196,64 +196,34 @@ app.get("/calendar/events/json", async (_req, res) => {
   }
 });
 
+// Pojedyncze wydarzenie (z lepszą walidacją i 404)
 app.get("/calendar/event", async (req, res) => {
-  const id = req.query.id;
-  if (!id) return res.status(400).send("Missing id");
+  const id = (req.query.id || "").trim();
+
+  if (!id || /^TU_WKLEJ_ID$/i.test(id)) {
+    return res.status(400).json({
+      error: "Brak poprawnego parametru ?id",
+      hint: "Najpierw wywołaj /calendar/events/json i skopiuj pole 'id' z któregoś wydarzenia.",
+      example: "/calendar/event?id=7k2q3l8f9n3p4t..."
+    });
+  }
+
   try {
     const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
     const ev = await calendar.events.get({ calendarId: "primary", eventId: id });
-    res.json(ev.data);
+    return res.json(ev.data);
   } catch (e) {
-    console.error(e);
-    res.status(500).send("Błąd pobierania wydarzenia");
-  }
-});
+    console.error("calendar/event error:", e?.response?.data || e);
+    const status = e?.code || e?.response?.status || 500;
 
-app.get("/calendar/today", async (_req, res) => {
-  try {
-    const { timeMin, timeMax } = isoDayRange(0);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const events = await calendar.events.list({
-      calendarId: "primary",
-      timeMin,
-      timeMax,
-      singleEvents: true,
-      orderBy: "startTime",
-    });
-    const result = (events.data.items || []).map((ev) => {
-      const startISO = ev.start?.dateTime || ev.start?.date || null;
-      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(
-        startISO
-      )})`;
-    });
-    res.json({ today: result });
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Błąd /calendar/today");
-  }
-});
-
-app.get("/calendar/tomorrow", async (_req, res) => {
-  try {
-    const { timeMin, timeMax } = isoDayRange(1);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const events = await calendar.events.list({
-      calendarId: "primary",
-      timeMin,
-      timeMax,
-      singleEvents: true,
-      orderBy: "startTime",
-    });
-    const result = (events.data.items || []).map((ev) => {
-      const startISO = ev.start?.dateTime || ev.start?.date || null;
-      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(
-        startISO
-      )})`;
-    });
-    res.json({ tomorrow: result });
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Błąd /calendar/tomorrow");
+    if (status === 404) {
+      return res.status(404).json({
+        error: "Wydarzenie nie znalezione",
+        id,
+        hint: "Upewnij się, że ID pochodzi z /calendar/events/json i należy do kalendarza 'primary'."
+      });
+    }
+    return res.status(500).json({ error: "Błąd pobierania wydarzenia" });
   }
 });
 
