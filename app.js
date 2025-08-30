@@ -5,11 +5,14 @@ import fetch from "node-fetch";
 import fs from "fs/promises";
 
 dotenv.config();
-app.use(express.json());
+
 console.log("DEBUG REDIRECT_URI =", process.env.GOOGLE_REDIRECT_URI);
 
 
 const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 const PORT = process.env.PORT || 8080;
 const TOKENS_PATH = "./tokens.json";
 
