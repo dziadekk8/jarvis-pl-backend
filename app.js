@@ -306,6 +306,15 @@ app.get("/calendar/event", async (req, res) => {
 // Dzisiejsze wydarzenia
 app.get("/calendar/today", async (_req, res) => {
   try {
+    if (!userTokens) {
+      return res.status(401).json({
+        error: "Brak autoryzacji",
+        fix: "Wejdź na /oauth2/start (albo /auth/reset → /oauth2/start jeśli wcześniej brakowało zgody na Kalendarz)"
+      });
+    }
+    // dla pewności ustawiamy kredencjały (gdyby proces się przeładował)
+    oAuth2Client.setCredentials(userTokens);
+
     const { timeMin, timeMax } = isoDayRange(0);
     const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
     const events = await calendar.events.list({
@@ -317,20 +326,30 @@ app.get("/calendar/today", async (_req, res) => {
     });
     const result = (events.data.items || []).map((ev) => {
       const startISO = ev.start?.dateTime || ev.start?.date || null;
-      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(
-        startISO
-      )})`;
+      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(startISO)})`;
     });
     res.json({ today: result });
   } catch (e) {
     console.error("calendar/today error:", e?.response?.data || e);
-    res.status(500).json({ error: "Błąd /calendar/today" });
+    const status = e?.response?.status || e?.code || 500;
+    res.status(Number.isInteger(status) ? status : 500).json({
+      error: "Błąd /calendar/today",
+      details: e?.response?.data?.error?.message || e?.message || "unknown"
+    });
   }
 });
 
 // Jutrzejsze wydarzenia
 app.get("/calendar/tomorrow", async (_req, res) => {
   try {
+    if (!userTokens) {
+      return res.status(401).json({
+        error: "Brak autoryzacji",
+        fix: "Wejdź na /oauth2/start (albo /auth/reset → /oauth2/start jeśli wcześniej brakowało zgody na Kalendarz)"
+      });
+    }
+    oAuth2Client.setCredentials(userTokens);
+
     const { timeMin, timeMax } = isoDayRange(1);
     const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
     const events = await calendar.events.list({
@@ -342,14 +361,16 @@ app.get("/calendar/tomorrow", async (_req, res) => {
     });
     const result = (events.data.items || []).map((ev) => {
       const startISO = ev.start?.dateTime || ev.start?.date || null;
-      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(
-        startISO
-      )})`;
+      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(startISO)})`;
     });
     res.json({ tomorrow: result });
   } catch (e) {
     console.error("calendar/tomorrow error:", e?.response?.data || e);
-    res.status(500).json({ error: "Błąd /calendar/tomorrow" });
+    const status = e?.response?.status || e?.code || 500;
+    res.status(Number.isInteger(status) ? status : 500).json({
+      error: "Błąd /calendar/tomorrow",
+      details: e?.response?.data?.error?.message || e?.message || "unknown"
+    });
   }
 });
 
