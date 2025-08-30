@@ -132,7 +132,69 @@ app.get("/calendar/events", async (_req, res) => {
   } catch (err) {
     console.error(err);
     res.send("❌ Błąd przy pobieraniu wydarzeń.");
+    // 4b) Szczegóły jednego wydarzenia po ID
+app.get("/calendar/event", async (req, res) => {
+  try {
+    if (!userTokens) return res.send("❌ Brak tokenów. Najpierw /oauth2/start.");
+    oauth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    const id = String(req.query.id || "").trim();
+    if (!id) return res.status(400).send("⚠️ Podaj ?id=ID_wydarzenia");
+
+    const ev = await calendar.events.get({ calendarId: "primary", eventId: id });
+    const e = ev.data;
+
+    const start = e.start?.dateTime || e.start?.date || "brak";
+    const end = e.end?.dateTime || e.end?.date || "brak";
+    const loc = e.location || "brak";
+    const desc = (e.description || "brak").slice(0, 1500); // żeby nie przesadzić z długością
+
+    res.json({
+      id: e.id,
+      summary: e.summary || "(brak tytułu)",
+      start,
+      end,
+      location: loc,
+      attendees: (e.attendees || []).map(a => ({ email: a.email, responseStatus: a.responseStatus })),
+      hangoutLink: e.hangoutLink || null,
+      description: desc
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("❌ Błąd przy pobieraniu szczegółów wydarzenia.");
   }
+});
+  }
+  // 4a) Lista wydarzeń w JSON (z ID)
+app.get("/calendar/events/json", async (_req, res) => {
+  try {
+    if (!userTokens) return res.send("❌ Brak tokenów. Najpierw /oauth2/start.");
+    oauth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    const now = new Date().toISOString();
+    const response = await calendar.events.list({
+      calendarId: "primary",
+      timeMin: now,
+      maxResults: 10,
+      singleEvents: true,
+      orderBy: "startTime"
+    });
+
+    const events = (response.data.items || []).map(e => ({
+      id: e.id,
+      summary: e.summary || "(brak tytułu)",
+      start: e.start?.dateTime || e.start?.date || null
+    }));
+
+    res.json({ events });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("❌ Błąd przy pobieraniu wydarzeń (JSON).");
+  }
+});
+
 });
 
 // === Gmail: listowanie wiadomości ===
