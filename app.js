@@ -116,8 +116,8 @@ const fmtDate = (iso) => {
   }
 };
 
-// Gmail: budowa surowej wiadomości (MIME) i kodowanie base64url – HTML + plain text
-function buildRawEmail({ to, subject, text, html, from }) {
+// Gmail: MIME builder – HTML + plain text + attachments (multipart/mixed)
+function buildRawEmail({ to, subject, text, html, from, attachments = [] }) {
   const encSubject = subject
     ? `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`
     : "";
@@ -126,22 +126,19 @@ function buildRawEmail({ to, subject, text, html, from }) {
     text ||
     (html ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
 
-  const boundary = "bndry_" + Date.now().toString(36);
+  // helper: łamanie linii Base64 (RFC 2045 ~76 znaków)
+  const b64wrap = (s) => (s || "").match(/.{1,76}/g)?.join("\r\n") || "";
 
-  const mime = [
-    `To: ${to}`,
-    from ? `From: ${from}` : "",
-    `Subject: ${encSubject}`,
-    "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    "",
-    `--${boundary}`,
+  // multipart/alternative (text + html)
+  const altBoundary = "bndry_alt_" + Date.now().toString(36);
+  const altPart = [
+    `--${altBoundary}`,
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
     "",
     fallbackText || "",
     "",
-    `--${boundary}`,
+    `--${altBoundary}`,
     "Content-Type: text/html; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
     "",
@@ -150,13 +147,59 @@ function buildRawEmail({ to, subject, text, html, from }) {
         .replace(/</g, "&lt;")
         .trim()}</pre></body></html>`,
     "",
-    `--${boundary}--`,
+    `--${altBoundary}--`,
     "",
-  ]
-    .filter((l) => l !== null && l !== undefined)
-    .join("\r\n");
+  ].join("\r\n");
 
-  return Buffer.from(mime, "utf-8")
+  let headers = [
+    `To: ${to}`,
+    from ? `From: ${from}` : "",
+    `Subject: ${encSubject}`,
+    "MIME-Version: 1.0",
+  ].filter(Boolean);
+
+  let finalMime = "";
+
+  if (attachments.length > 0) {
+    // multipart/mixed: najpierw alternative, potem każdy załącznik
+    const mixBoundary = "bndry_mix_" + Math.random().toString(36).slice(2);
+
+    headers.push(`Content-Type: multipart/mixed; boundary="${mixBoundary}"`);
+
+    const parts = [
+      "", // pusta linia po nagłówkach
+      `--${mixBoundary}`,
+      `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+      "",
+      altPart.trim(), // cały alternative jako jeden part
+    ];
+
+    for (const att of attachments) {
+      const filename = att.filename || "attachment";
+      const mimeType = att.mimeType || "application/octet-stream";
+      const dataB64 = att.data || att.dataBase64 || ""; // oczekujemy czystej base64
+
+      parts.push(
+        `--${mixBoundary}`,
+        `Content-Type: ${mimeType}; name="${filename}"`,
+        "Content-Transfer-Encoding: base64",
+        `Content-Disposition: attachment; filename="${filename}"`,
+        "",
+        b64wrap(dataB64),
+        ""
+      );
+    }
+
+    parts.push(`--${mixBoundary}--`, "");
+
+    finalMime = headers.join("\r\n") + "\r\n" + parts.join("\r\n");
+  } else {
+    // tylko multipart/alternative (bez załączników)
+    headers.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
+    finalMime = headers.join("\r\n") + "\r\n\r\n" + altPart;
+  }
+
+  return Buffer.from(finalMime, "utf-8")
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
@@ -218,12 +261,16 @@ app.get("/auth/tokeninfo", async (_req, res) => {
   }
 });
 
-// Reset tokenów (usuwa tokens.json i czyści pamięć)
+// Reset tokenów z prostym zabezpieczeniem nagłówkiem
 app.get("/auth/reset", (req, res) => {
   try {
-    if (fs.existsSync(TOKEN_PATH)) {
-      fs.unlinkSync(TOKEN_PATH);
+    const adminToken = process.env.RESET_TOKEN || "";
+    const provided = req.header("x-admin-token") || "";
+    if (!adminToken || provided !== adminToken) {
+      return res.status(403).json({ error: "Forbidden: invalid x-admin-token" });
     }
+
+    if (fs.existsSync(TOKEN_PATH)) fs.unlinkSync(TOKEN_PATH);
     userTokens = null;
     res.send("✅ tokens.json usunięty. Zaloguj ponownie: /oauth2/start");
   } catch (err) {
@@ -231,6 +278,7 @@ app.get("/auth/reset", (req, res) => {
     res.status(500).send("❌ Błąd przy usuwaniu tokenów.");
   }
 });
+
 
 // ── ROUTES: CALENDAR ───────────────────────────────────────────────
 app.get("/calendar/events/json", async (_req, res) => {
@@ -374,6 +422,54 @@ app.get("/calendar/tomorrow", async (_req, res) => {
   }
 });
 
+// Tworzenie wydarzenia: POST /calendar/create
+// Body JSON: { summary, startISO, endISO, timeZone? }
+app.post("/calendar/create", async (req, res) => {
+  try {
+    if (!userTokens) {
+      return res.status(401).json({
+        error: "Brak autoryzacji",
+        fix: "Wejdź na /oauth2/start (albo /auth/reset → /oauth2/start)"
+      });
+    }
+    oAuth2Client.setCredentials(userTokens);
+
+    const { summary, startISO, endISO, timeZone = "Europe/Warsaw", description } = req.body || {};
+    if (!summary || !startISO || !endISO) {
+      return res.status(400).json({
+        error: "Wymagane pola: summary, startISO, endISO",
+        example: {
+          summary: "Spotkanie",
+          startISO: "2025-09-01T10:00:00+02:00",
+          endISO: "2025-09-01T11:00:00+02:00",
+          timeZone: "Europe/Warsaw"
+        }
+      });
+    }
+
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const resp = await calendar.events.insert({
+      calendarId: "primary",
+      requestBody: {
+        summary,
+        description: description || undefined,
+        start: { dateTime: startISO, timeZone },
+        end: { dateTime: endISO, timeZone }
+      }
+    });
+
+    return res.json({
+      id: resp.data.id,
+      htmlLink: resp.data.htmlLink,
+      status: resp.data.status
+    });
+  } catch (e) {
+    console.error("calendar/create error:", e?.response?.data || e);
+    res.status(500).json({ error: "Błąd tworzenia wydarzenia" });
+  }
+});
+
+
 // ── ROUTES: GMAIL (READ + SEND) ────────────────────────────────────
 app.get("/gmail/messages", async (req, res) => {
   try {
@@ -415,13 +511,13 @@ app.get("/gmail/messages", async (req, res) => {
 
 // Wysyłka maila: POST /gmail/send  { to, subject, text, html, [from] }
 app.post("/gmail/send", async (req, res) => {
-  const { to, subject, text, html, from } = req.body || {};
+  const { to, subject, text, html, from, attachments = [] } = req.body || {};
   if (!to || !subject) {
     return res.status(400).json({ error: "Wymagane pola: to, subject" });
   }
   try {
     const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
-    const raw = buildRawEmail({ to, subject, text, html, from });
+    const raw = buildRawEmail({ to, subject, text, html, from, attachments });
     const sendResp = await gmail.users.messages.send({
       userId: "me",
       requestBody: { raw },
