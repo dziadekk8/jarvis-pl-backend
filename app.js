@@ -124,16 +124,29 @@ const fmtTime = (iso) => {
 const fmtRange = (startIso, endIso) => `${fmtDate(startIso)}, ${fmtTime(startIso)} – ${fmtTime(endIso)}`;
 
 function isoDayRange(offsetDays = 0) {
-  // Zakres dnia w TZ (Warszawa) jako ISO
+  // Wyznacz yyyy-mm-dd w strefie TZ bez parsowania stringów
   const now = new Date();
-  const inTZ = new Date(now.toLocaleString("en-CA", { timeZone: TZ }));
-  inTZ.setHours(0, 0, 0, 0);
-  inTZ.setDate(inTZ.getDate() + offsetDays);
-  const start = new Date(inTZ);
-  const end = new Date(inTZ);
-  end.setDate(end.getDate() + 1);
-  return { timeMin: start.toISOString(), timeMax: end.toISOString() };
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(now);
+
+  const y = Number(parts.find(p => p.type === "year").value);
+  const m = Number(parts.find(p => p.type === "month").value);
+  const d = Number(parts.find(p => p.type === "day").value);
+
+  // Ustal północ w TZ jako północ UTC dla tej daty
+  const startUTC = new Date(Date.UTC(y, m - 1, d + offsetDays, 0, 0, 0, 0));
+  const endUTC   = new Date(Date.UTC(y, m - 1, d + offsetDays + 1, 0, 0, 0, 0));
+
+  return {
+    timeMin: startUTC.toISOString(),
+    timeMax: endUTC.toISOString()
+  };
 }
+
 
 // === Google Calendar: wydarzenia ===
 app.get("/calendar/events", async (_req, res) => {
