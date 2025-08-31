@@ -535,6 +535,116 @@ app.post("/gmail/send", async (req, res) => {
   }
 });
 
+// Odpowiedź w wątku: POST /gmail/reply
+// Body JSON: { replyToMessageId?, threadId?, to?, subject?, text?, html?, attachments?[] }
+app.post("/gmail/reply", async (req, res) => {
+  try {
+    if (!userTokens) {
+      return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    }
+    oAuth2Client.setCredentials(userTokens);
+
+    const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
+    const {
+      replyToMessageId, // ID wiadomości z Gmail API (z naszego /gmail/messages)
+      threadId: threadIdInput,
+      to: toInput,
+      subject: subjectInput,
+      text,
+      html,
+      attachments = [],
+      inReplyTo: inReplyToInput,  // opcjonalnie surowy Message-ID z nagłówka
+      references: referencesInput // opcjonalnie References
+    } = req.body || {};
+
+    if (!text && !html) {
+      return res.status(400).json({ error: "Wymagane: text lub html" });
+    }
+
+    // Jeżeli mamy replyToMessageId – pobierz metadane, żeby:
+    // - znać prawdziwy Message-ID (nagłówek), References, Subject, Reply-To/From
+    // - znać threadId, jeżeli nie podano
+    let orig = null;
+    if (replyToMessageId) {
+      const m = await gmail.users.messages.get({
+        userId: "me",
+        id: replyToMessageId,
+        format: "metadata",
+        metadataHeaders: ["Message-ID", "References", "Subject", "From", "Reply-To"]
+      });
+      orig = {
+        threadId: m.data.threadId,
+        headers: (m.data.payload?.headers || []).reduce((acc, h) => {
+          acc[h.name.toLowerCase()] = h.value;
+          return acc;
+        }, {})
+      };
+    }
+
+    // Ustal threadId
+    let threadId = threadIdInput || orig?.threadId;
+    if (!threadId) {
+      return res.status(400).json({ error: "Brak threadId lub replyToMessageId" });
+    }
+
+    // Ustal In-Reply-To i References
+    const origMsgId = orig?.headers?.["message-id"]; // np. "<xxxx@mail.gmail.com>"
+    const inReplyTo = inReplyToInput || origMsgId || null;
+
+    // References: stare + bieżące Message-ID
+    let references = referencesInput || null;
+    if (!references) {
+      const prevRefs = (orig?.headers?.["references"] || "").trim();
+      references = [prevRefs, origMsgId].filter(Boolean).join(" ").trim() || null;
+    }
+
+    // Ustal Subject (Re: ...)
+    let subject = subjectInput;
+    if (!subject) {
+      const origSubj = orig?.headers?.["subject"] || "";
+      subject = /^Re:/i.test(origSubj) ? origSubj : `Re: ${origSubj}`;
+    }
+
+    // Ustal To (Reply-To > From)
+    let to = toInput;
+    if (!to) {
+      to = orig?.headers?.["reply-to"] || orig?.headers?.["from"] || null;
+    }
+
+    if (!to) {
+      return res.status(400).json({ error: "Nie udało się ustalić odbiorcy (to). Podaj 'to' w body." });
+    }
+
+    // Zbuduj MIME z dodatkowymi nagłówkami
+    const headersExtra = {};
+    if (inReplyTo) headersExtra["In-Reply-To"] = inReplyTo;
+    if (references) headersExtra["References"] = references;
+
+    const raw = buildRawEmail({
+      to, subject, text, html, attachments,
+      headersExtra
+    });
+
+    // Wyślij w obrębie wątku
+    const sendResp = await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw, threadId }
+    });
+
+    return res.json({
+      id: sendResp.data.id,
+      threadId: sendResp.data.threadId || threadId,
+      labelIds: sendResp.data.labelIds || []
+    });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("gmail/reply error:", details);
+    return res.status(status).json({ error: "gmail_reply_failed", status, details });
+  }
+});
+
+
 // ── ROUTES: DRIVE ──────────────────────────────────────────────────
 app.get("/drive/search", async (req, res) => {
   try {
