@@ -57,3 +57,4 @@ components:
       in: header
       name: x-admin-token
       description: Wymagane dla /auth/reset
+# bump: 2025-08-31 22:36:02 +02:00
