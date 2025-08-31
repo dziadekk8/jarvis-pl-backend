@@ -5,6 +5,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { google } from "googleapis";
+import crypto from "crypto";
+
 
 dotenv.config();
 
@@ -444,66 +446,96 @@ app.get("/calendar/tomorrow", async (_req, res) => {
 
 // Tworzenie wydarzenia: POST /calendar/create
 // Body JSON: { summary, startISO, endISO, timeZone? }
+// Tworzenie wydarzenia: POST /calendar/create (z opcją Google Meet)
 app.post("/calendar/create", async (req, res) => {
   try {
     if (!userTokens) {
-      return res.status(401).json({
-        error: "Brak autoryzacji",
-        fix: "Wejdź na /oauth2/start (albo /auth/reset → /oauth2/start)"
-      });
+      return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
     }
     oAuth2Client.setCredentials(userTokens);
 
-    const { summary, startISO, endISO, timeZone = "Europe/Warsaw", description } = req.body || {};
+    const {
+      summary,
+      description,
+      location,
+      startISO,
+      endISO,
+      timeZone = "Europe/Warsaw",
+      attendeesEmails = [],
+      remindersMinutes,
+      // NOWOŚĆ:
+      createMeet = false,
+      sendUpdates = "none",
+    } = req.body || {};
+
     if (!summary || !startISO || !endISO) {
-      return res.status(400).json({
-        error: "Wymagane pola: summary, startISO, endISO",
-        example: {
-          summary: "Spotkanie",
-          startISO: "2025-09-01T10:00:00+02:00",
-          endISO: "2025-09-01T11:00:00+02:00",
-          timeZone: "Europe/Warsaw"
-        }
-      });
+      return res.status(400).json({ error: "Wymagane: summary, startISO, endISO" });
+    }
+
+    const { start, end } = makeStartEnd({ startISO, endISO, timeZone });
+
+    const event = {
+      summary,
+      description,
+      location,
+      start,
+      end,
+    };
+
+    if (Array.isArray(attendeesEmails) && attendeesEmails.length > 0) {
+      event.attendees = attendeesEmails
+        .filter((e) => typeof e === "string" && e.includes("@"))
+        .map((email) => ({ email }));
+    }
+
+    if (typeof remindersMinutes === "number" && remindersMinutes >= 0) {
+      event.reminders = {
+        useDefault: false,
+        overrides: [{ method: "popup", minutes: Math.floor(remindersMinutes) }],
+      };
+    }
+
+    // --- NOWOŚĆ: Google Meet ---
+    // Jeśli chcemy dodać od razu link do Meet:
+    let conferenceDataVersionOpt = {};
+    if (createMeet === true) {
+      event.conferenceData = {
+        createRequest: {
+          requestId: crypto.randomUUID(),
+          conferenceSolutionKey: { type: "hangoutsMeet" },
+        },
+      };
+      // UWAGA: to pole MUSI być przekazane do insert/patch na „poziomie wywołania”, nie w requestBody
+      conferenceDataVersionOpt = { conferenceDataVersion: 1 };
     }
 
     const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
     const resp = await calendar.events.insert({
       calendarId: "primary",
-      requestBody: {
-        summary,
-        description: description || undefined,
-        start: { dateTime: startISO, timeZone },
-        end: { dateTime: endISO, timeZone }
-      }
+      requestBody: event,
+      sendUpdates,
+      ...conferenceDataVersionOpt,
     });
 
     return res.json({
       id: resp.data.id,
       htmlLink: resp.data.htmlLink,
-      status: resp.data.status
+      status: resp.data.status,
+      start: resp.data.start,
+      end: resp.data.end,
+      summary: resp.data.summary,
+      // Przydatne pola dot. Meet:
+      hangoutLink: resp.data.hangoutLink || null,
+      conferenceData: resp.data.conferenceData || null,
     });
   } catch (e) {
-    console.error("calendar/create error:", e?.response?.data || e);
-    res.status(500).json({ error: "Błąd tworzenia wydarzenia" });
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/create error:", details);
+    return res.status(status).json({ error: "calendar_create_failed", status, details });
   }
 });
 
-// Pomocniczo: budowa pól start/end (obsługa all-day vs dateTime)
-function makeStartEnd({ startISO, endISO, timeZone = "Europe/Warsaw" }) {
-  const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
-  const start = startISO
-    ? (isDate(startISO)
-        ? { date: startISO, timeZone }
-        : { dateTime: startISO, timeZone })
-    : undefined;
-  const end = endISO
-    ? (isDate(endISO)
-        ? { date: endISO, timeZone }
-        : { dateTime: endISO, timeZone })
-    : undefined;
-  return { start, end };
-}
 
 /**
  * Aktualizacja (partial, PATCH) wydarzenia w kalendarzu
@@ -515,6 +547,16 @@ function makeStartEnd({ startISO, endISO, timeZone = "Europe/Warsaw" }) {
  *   attendeesEmails?: string[],         // ["a@b.pl","c@d.pl"]
  *   remindersMinutes?: number,          // np. 10 (popup)
  *   sendUpdates?: "all"|"externalOnly"|"none" (domyślnie "none")
+ * }
+ */
+/**
+ * Aktualizacja (partial, PATCH) wydarzenia w kalendarzu
+ * POST /calendar/update
+ * Body JSON: {
+ *   id: string (wymagane),
+ *   ...jak wcześniej...,
+ *   createMeet?: boolean,           // NOWOŚĆ: true = dołóż link Meet
+ *   sendUpdates?: "all"|"externalOnly"|"none"
  * }
  */
 app.post("/calendar/update", async (req, res) => {
@@ -534,6 +576,8 @@ app.post("/calendar/update", async (req, res) => {
       timeZone = "Europe/Warsaw",
       attendeesEmails = [],
       remindersMinutes,
+      // NOWOŚĆ:
+      createMeet = undefined,
       sendUpdates = "none",
     } = req.body || {};
 
@@ -541,7 +585,6 @@ app.post("/calendar/update", async (req, res) => {
       return res.status(400).json({ error: "Wymagane pole: id" });
     }
 
-    // requestBody tylko z polami, które podano
     const body = {};
     if (summary !== undefined) body.summary = summary;
     if (description !== undefined) body.description = description;
@@ -566,12 +609,25 @@ app.post("/calendar/update", async (req, res) => {
       };
     }
 
+    // --- NOWOŚĆ: dołożenie Google Meet przy update ---
+    let confOpt = {};
+    if (createMeet === true) {
+      body.conferenceData = {
+        createRequest: {
+          requestId: crypto.randomUUID(),
+          conferenceSolutionKey: { type: "hangoutsMeet" },
+        },
+      };
+      confOpt = { conferenceDataVersion: 1 };
+    }
+
     const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
     const resp = await calendar.events.patch({
       calendarId: "primary",
       eventId: id,
       requestBody: body,
       sendUpdates,
+      ...confOpt,
     });
 
     return res.json({
@@ -582,6 +638,8 @@ app.post("/calendar/update", async (req, res) => {
       end: resp.data.end,
       summary: resp.data.summary,
       updated: resp.data.updated,
+      hangoutLink: resp.data.hangoutLink || null,
+      conferenceData: resp.data.conferenceData || null,
     });
   } catch (e) {
     const status = e?.response?.status || 500;
