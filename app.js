@@ -446,7 +446,26 @@ app.get("/calendar/tomorrow", async (_req, res) => {
 
 // Tworzenie wydarzenia: POST /calendar/create
 // Body JSON: { summary, startISO, endISO, timeZone? }
-// Tworzenie wydarzenia: POST /calendar/create (z opcją Google Meet)
+// Tworzenie wydarzenia: POST /calendar/create (z opcją Google Meet)// Pomocniczo: budowa pól start/end (obsługa all-day vs dateTime)
+// Wklej ten blok nad wszystkimi endpointami kalendarza:
+function makeStartEnd({ startISO, endISO, timeZone = "Europe/Warsaw" }) {
+  const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+  const start = startISO
+    ? (isDate(startISO)
+        ? { date: startISO, timeZone }
+        : { dateTime: startISO, timeZone })
+    : undefined;
+
+  const end = endISO
+    ? (isDate(endISO)
+        ? { date: endISO, timeZone }
+        : { dateTime: endISO, timeZone })
+    : undefined;
+
+  return { start, end };
+}
+
 app.post("/calendar/create", async (req, res) => {
   try {
     if (!userTokens) {
