@@ -20,6 +20,7 @@ process.on("unhandledRejection", (reason) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
+
 const PORT = process.env.PORT || 8080;
 const TZ = "Europe/Warsaw";
 const TOKEN_PATH = path.join(__dirname, "tokens.json");
@@ -31,6 +32,12 @@ app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 // Proste endpointy zdrowia
 app.get("/", (_req, res) => res.send("OK"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Serwowanie specyfikacji OpenAPI (plik obok app.js)
+app.get("/openapi.yaml", (_req, res) => {
+  res.type("text/yaml; charset=utf-8");
+  res.sendFile(path.join(__dirname, "openapi.yaml"));
+});
 
 // Debug: pokaż zarejestrowane trasy
 app.get("/debug/routes", (_req, res) => {
