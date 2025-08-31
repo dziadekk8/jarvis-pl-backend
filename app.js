@@ -47,8 +47,8 @@ app.get("/openapi-public.yaml", (_req, res) => {
   res.sendFile(path.join(__dirname, "openapi-public.yaml"));
 });
 
+
 // Swagger UI – interaktywna dokumentacja pod /docs
-import swaggerUi from "swagger-ui-express";
 app.use(
   "/docs",
   swaggerUi.serve,
@@ -58,6 +58,9 @@ app.use(
     customCss: ".swagger-ui .topbar { display:none }"
   })
 );
+
+// (opcjonalnie) przyjazny redirect z /docs na /docs/
+app.get("/docs", (_req, res) => res.redirect("/docs/"));
 
 app.get("/openapi.yaml", (_req, res) => {
   res.type("text/yaml; charset=utf-8");
