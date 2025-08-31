@@ -488,6 +488,183 @@ app.post("/calendar/create", async (req, res) => {
   }
 });
 
+// Pomocniczo: budowa pól start/end (obsługa all-day vs dateTime)
+function makeStartEnd({ startISO, endISO, timeZone = "Europe/Warsaw" }) {
+  const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const start = startISO
+    ? (isDate(startISO)
+        ? { date: startISO, timeZone }
+        : { dateTime: startISO, timeZone })
+    : undefined;
+  const end = endISO
+    ? (isDate(endISO)
+        ? { date: endISO, timeZone }
+        : { dateTime: endISO, timeZone })
+    : undefined;
+  return { start, end };
+}
+
+/**
+ * Aktualizacja (partial, PATCH) wydarzenia w kalendarzu
+ * POST /calendar/update
+ * Body JSON: {
+ *   id: string (wymagane),
+ *   summary?, description?, location?,
+ *   startISO?, endISO?, timeZone?,
+ *   attendeesEmails?: string[],         // ["a@b.pl","c@d.pl"]
+ *   remindersMinutes?: number,          // np. 10 (popup)
+ *   sendUpdates?: "all"|"externalOnly"|"none" (domyślnie "none")
+ * }
+ */
+app.post("/calendar/update", async (req, res) => {
+  try {
+    if (!userTokens) {
+      return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    }
+    oAuth2Client.setCredentials(userTokens);
+
+    const {
+      id,
+      summary,
+      description,
+      location,
+      startISO,
+      endISO,
+      timeZone = "Europe/Warsaw",
+      attendeesEmails = [],
+      remindersMinutes,
+      sendUpdates = "none",
+    } = req.body || {};
+
+    if (!id) {
+      return res.status(400).json({ error: "Wymagane pole: id" });
+    }
+
+    // requestBody tylko z polami, które podano
+    const body = {};
+    if (summary !== undefined) body.summary = summary;
+    if (description !== undefined) body.description = description;
+    if (location !== undefined) body.location = location;
+
+    if (startISO || endISO) {
+      const { start, end } = makeStartEnd({ startISO, endISO, timeZone });
+      if (start) body.start = start;
+      if (end) body.end = end;
+    }
+
+    if (Array.isArray(attendeesEmails) && attendeesEmails.length > 0) {
+      body.attendees = attendeesEmails
+        .filter((e) => typeof e === "string" && e.includes("@"))
+        .map((email) => ({ email }));
+    }
+
+    if (typeof remindersMinutes === "number" && remindersMinutes >= 0) {
+      body.reminders = {
+        useDefault: false,
+        overrides: [{ method: "popup", minutes: Math.floor(remindersMinutes) }],
+      };
+    }
+
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const resp = await calendar.events.patch({
+      calendarId: "primary",
+      eventId: id,
+      requestBody: body,
+      sendUpdates,
+    });
+
+    return res.json({
+      id: resp.data.id,
+      htmlLink: resp.data.htmlLink,
+      status: resp.data.status,
+      start: resp.data.start,
+      end: resp.data.end,
+      summary: resp.data.summary,
+      updated: resp.data.updated,
+    });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/update error:", details);
+    return res.status(status).json({ error: "calendar_update_failed", status, details });
+  }
+});
+
+/**
+ * Usuwanie wydarzenia
+ * POST /calendar/delete
+ * Body JSON: { id: string (wymagane), sendUpdates?: "all"|"externalOnly"|"none" }
+ *
+ * Uwaga: dla wydarzeń cyklicznych możesz przekazać ID instancji
+ * w postaci "SERIES_ID_YYYYMMDDTHHMMSSZ", aby skasować TYLKO tę instancję.
+ */
+app.post("/calendar/delete", async (req, res) => {
+  try {
+    if (!userTokens) {
+      return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    }
+    oAuth2Client.setCredentials(userTokens);
+
+    const { id, sendUpdates = "none" } = req.body || {};
+    if (!id) return res.status(400).json({ error: "Wymagane pole: id" });
+
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    await calendar.events.delete({
+      calendarId: "primary",
+      eventId: id,
+      sendUpdates,
+    });
+
+    return res.json({ ok: true, deletedId: id });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/delete error:", details);
+    return res.status(status).json({ error: "calendar_delete_failed", status, details });
+  }
+});
+
+/**
+ * (BONUS) Szybkie dodawanie "naturalnym językiem"
+ * POST /calendar/quickadd
+ * Body JSON: { text: string (wymagane), sendUpdates?: "all"|"externalOnly"|"none" }
+ * Przykład: "Spotkanie z Kasią jutro 10:00-11:00"
+ */
+app.post("/calendar/quickadd", async (req, res) => {
+  try {
+    if (!userTokens) {
+      return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    }
+    oAuth2Client.setCredentials(userTokens);
+
+    const { text, sendUpdates = "none" } = req.body || {};
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: "Wymagane pole: text" });
+    }
+
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const resp = await calendar.events.quickAdd({
+      calendarId: "primary",
+      text,
+      sendUpdates,
+    });
+
+    return res.json({
+      id: resp.data.id,
+      htmlLink: resp.data.htmlLink,
+      status: resp.data.status,
+      start: resp.data.start,
+      end: resp.data.end,
+      summary: resp.data.summary,
+    });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/quickadd error:", details);
+    return res.status(status).json({ error: "calendar_quickadd_failed", status, details });
+  }
+});
+
 
 // ── ROUTES: GMAIL (READ + SEND) ────────────────────────────────────
 app.get("/gmail/messages", async (req, res) => {
