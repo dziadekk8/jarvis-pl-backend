@@ -1139,3 +1139,202 @@ app.get("/calendar/instances", async (req, res) => {
     return res.status(status).json({ error: "calendar_instances_failed", status, details });
   }
 });
+/**
+ * Free/Busy – zajętość kalendarzy
+ * POST /calendar/freebusy
+ * Body: { timeMin, timeMax, attendeesCalendars?: string[] }   # np. ["primary", "me@gmail.com"]
+ */
+app.post("/calendar/freebusy", async (req, res) => {
+  try {
+    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    oAuth2Client.setCredentials(userTokens);
+
+    const {
+      timeMin,                 // ISO; jeśli brak → teraz
+      timeMax,                 // ISO; jeśli brak → +7 dni
+      attendeesCalendars = [], // dodatkowe kalendarze (ID/email); "primary" dopniemy sami
+    } = req.body || {};
+
+    const start = timeMin ? new Date(timeMin) : new Date();
+    const end   = timeMax ? new Date(timeMax) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
+    if (!(start instanceof Date) || isNaN(start) || !(end instanceof Date) || isNaN(end) || end <= start) {
+      return res.status(400).json({ error: "Nieprawidłowe timeMin/timeMax" });
+    }
+
+    // zbuduj listę kalendarzy do sprawdzenia
+    const ids = Array.from(new Set(["primary", ...attendeesCalendars])).map(id => ({ id }));
+
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const resp = await calendar.freebusy.query({
+      requestBody: { timeMin: start.toISOString(), timeMax: end.toISOString(), items: ids },
+    });
+
+    // spłaszczone busy
+    const calendars = resp.data.calendars || {};
+    const allBusy = [];
+    Object.values(calendars).forEach(c => {
+      (c.busy || []).forEach(b => allBusy.push({ start: new Date(b.start), end: new Date(b.end) }));
+    });
+
+    // merge przedziałów (dla wygody klienckiej)
+    allBusy.sort((a,b)=>a.start-b.start);
+    const merged = [];
+    for (const iv of allBusy) {
+      if (!merged.length || iv.start > merged[merged.length-1].end) merged.push({ ...iv });
+      else if (iv.end > merged[merged.length-1].end) merged[merged.length-1].end = iv.end;
+    }
+
+    return res.json({
+      timeMin: start.toISOString(),
+      timeMax: end.toISOString(),
+      calendars: calendars, // surowa odpowiedź Google per kalendarz
+      busyCombined: merged.map(iv => ({ start: iv.start.toISOString(), end: iv.end.toISOString() })),
+    });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/freebusy error:", details);
+    return res.status(status).json({ error: "calendar_freebusy_failed", status, details });
+  }
+});
+/**
+ * Sugestie slotów – wyznacza wolne okna 30/60 min w godzinach pracy
+ * POST /calendar/suggest
+ * Body:
+ *  {
+ *    timeMin?: ISO, timeMax?: ISO,                 // domyślnie teraz → +7 dni
+ *    durationMinutes: number,                      // np. 30 lub 60 (wymagane)
+ *    attendeesCalendars?: string[],                // ["primary", "ktoś@domena.com"]
+ *    workHours?: { start: "08:00", end: "18:00", timeZone?: "Europe/Warsaw" },
+ *    includeWeekends?: boolean,                    // domyślnie false
+ *    bufferMinutesBefore?: number, bufferMinutesAfter?: number, // domyślnie 0
+ *    stepMinutes?: number,                         // siatka, domyślnie 30
+ *    limit?: number                                // ile slotów zwrócić, domyślnie 20
+ *  }
+ */
+app.post("/calendar/suggest", async (req, res) => {
+  try {
+    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    oAuth2Client.setCredentials(userTokens);
+
+    const {
+      timeMin,
+      timeMax,
+      durationMinutes,
+      attendeesCalendars = [],
+      workHours = { start: "08:00", end: "18:00", timeZone: "Europe/Warsaw" },
+      includeWeekends = false,
+      bufferMinutesBefore = 0,
+      bufferMinutesAfter = 0,
+      stepMinutes = 30,
+      limit = 20,
+    } = req.body || {};
+
+    if (!durationMinutes || durationMinutes <= 0) {
+      return res.status(400).json({ error: "Wymagane: durationMinutes > 0" });
+    }
+
+    const TZ = workHours.timeZone || "Europe/Warsaw";
+    const start = timeMin ? new Date(timeMin) : new Date();
+    const end   = timeMax ? new Date(timeMax) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
+    if (isNaN(start) || isNaN(end) || end <= start) {
+      return res.status(400).json({ error: "Nieprawidłowe timeMin/timeMax" });
+    }
+
+    const ids = Array.from(new Set(["primary", ...attendeesCalendars])).map(id => ({ id }));
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const fb = await calendar.freebusy.query({
+      requestBody: { timeMin: start.toISOString(), timeMax: end.toISOString(), items: ids },
+    });
+
+    // Zbierz i poszerz zajętości o buffery
+    const busy = [];
+    Object.values(fb.data.calendars || {}).forEach(c => {
+      (c.busy || []).forEach(b => {
+        const s = new Date(b.start).getTime() - bufferMinutesBefore * 60000;
+        const e = new Date(b.end).getTime()   + bufferMinutesAfter  * 60000;
+        busy.push({ start: new Date(s), end: new Date(e) });
+      });
+    });
+
+    // Scal przedziały zajęte
+    busy.sort((a,b)=>a.start-b.start);
+    const merged = [];
+    for (const iv of busy) {
+      if (!merged.length || iv.start > merged[merged.length-1].end) merged.push({ ...iv });
+      else if (iv.end > merged[merged.length-1].end) merged[merged.length-1].end = iv.end;
+    }
+
+    // Generowanie slotów dzień po dniu w strefie TZ
+    const parseHM = (s) => { const [h,m]=s.split(":").map(Number); return {h:h||0,m:m||0}; };
+    const whStart = parseHM(workHours.start || "08:00");
+    const whEnd   = parseHM(workHours.end   || "18:00");
+
+    const dayStartTZ = (d) => { const x = new Date(d.toLocaleString("en-CA", { timeZone: TZ })); x.setHours(0,0,0,0); return x; };
+    const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+
+    const slots = [];
+    let cursor = new Date(start);
+    const totalMS = end - start;
+
+    while (cursor < end && slots.length < limit) {
+      const ds = dayStartTZ(cursor);                  // północ w TZ
+      const we = ds.getDay();                         // 0=nd,1=pn...
+      if (!includeWeekends && (we === 0 || we === 6)) { cursor = addDays(ds, 1); continue; }
+
+      const windowStart = new Date(ds);
+      windowStart.setHours(whStart.h, whStart.m, 0, 0);
+      const windowEnd = new Date(ds);
+      windowEnd.setHours(whEnd.h, whEnd.m, 0, 0);
+
+      // przytnij do globalnego zakresu
+      const wStart = windowStart < start ? start : windowStart;
+      const wEnd   = windowEnd   > end   ? end   : windowEnd;
+      if (wEnd <= wStart) { cursor = addDays(ds, 1); continue; }
+
+      // siatka stepMinutes
+      const stepMS = stepMinutes * 60000;
+      const durMS  = durationMinutes * 60000;
+
+      // zacznij wyrównany do siatki
+      let t = new Date(Math.ceil(wStart.getTime() / stepMS) * stepMS);
+      while (t.getTime() + durMS <= wEnd.getTime() && slots.length < limit) {
+        const slotEnd = new Date(t.getTime() + durMS);
+
+        // kolizja z merged?
+        let conflict = false;
+        // szybkie pomijanie: jeśli pierwszy merged kończy się przed slotem, przesuwaj indeks (tu prosto: linearnie)
+        for (const iv of merged) {
+          if (iv.end <= t) continue;
+          if (iv.start >= slotEnd) break;
+          // overlap
+          conflict = true; break;
+        }
+
+        if (!conflict) {
+          slots.push({ startISO: t.toISOString(), endISO: slotEnd.toISOString() });
+        }
+        t = new Date(t.getTime() + stepMS);
+      }
+
+      // następny dzień
+      cursor = addDays(ds, 1);
+    }
+
+    return res.json({
+      timeMin: start.toISOString(),
+      timeMax: end.toISOString(),
+      durationMinutes,
+      workHours: { start: workHours.start || "08:00", end: workHours.end || "18:00", timeZone: TZ },
+      includeWeekends,
+      stepMinutes,
+      limitRequested: limit,
+      slots,
+    });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/suggest error:", details);
+    return res.status(status).json({ error: "calendar_suggest_failed", status, details });
+  }
+});
