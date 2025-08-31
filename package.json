@@ -1,27 +1,24 @@
 {
   "name": "jarvis-pl-backend",
   "version": "1.0.0",
+  "description": "Jarvis-PL backend (Calendar/Gmail/Drive/Places + Redis + Swagger UI)",
   "type": "module",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "dev": "nodemon --signal SIGINT app.js",
-    "start:local": "cross-env GOOGLE_REDIRECT_URI=http://localhost:8080/oauth2/callback node app.js",
-    "restart": "powershell -NoLogo -NoProfile -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force; npm run start\""
+    "dev": "node app.js"
   },
-  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
-    "@upstash/redis": "^1.35.3",
+    "@upstash/redis": "^1.30.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "googleapis": "^159.0.0",
-    "node-fetch": "^3.3.2",
-    "swagger-ui-express": "^5.0.1",
-    "yaml": "^2.8.1"
+    "swagger-ui-express": "^5.0.0",
+    "yaml": "^2.4.2"
   },
-  "devDependencies": {
-    "cross-env": "^7.0.3",
-    "nodemon": "^3.1.0"
-  }
+  "license": "MIT"
 }
