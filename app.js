@@ -117,8 +117,8 @@ const fmtDate = (iso) => {
   }
 };
 
-// Gmail: MIME builder – HTML + plain text + attachments (multipart/mixed)
-function buildRawEmail({ to, subject, text, html, from, attachments = [] }) {
+// Gmail: MIME builder – HTML + plain text + attachments (multipart/mixed) + extra headers
+function buildRawEmail({ to, subject, text, html, from, attachments = [], headersExtra = {} }) {
   const encSubject = subject
     ? `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`
     : "";
@@ -127,7 +127,6 @@ function buildRawEmail({ to, subject, text, html, from, attachments = [] }) {
     text ||
     (html ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
 
-  // helper: łamanie linii Base64 (RFC 2045 ~76 znaków)
   const b64wrap = (s) => (s || "").match(/.{1,76}/g)?.join("\r\n") || "";
 
   // multipart/alternative (text + html)
@@ -152,6 +151,7 @@ function buildRawEmail({ to, subject, text, html, from, attachments = [] }) {
     "",
   ].join("\r\n");
 
+  // Bazowe nagłówki
   let headers = [
     `To: ${to}`,
     from ? `From: ${from}` : "",
@@ -159,12 +159,18 @@ function buildRawEmail({ to, subject, text, html, from, attachments = [] }) {
     "MIME-Version: 1.0",
   ].filter(Boolean);
 
+  // Dodatkowe nagłówki (np. In-Reply-To, References)
+  if (headersExtra && typeof headersExtra === "object") {
+    for (const [k, v] of Object.entries(headersExtra)) {
+      if (v) headers.push(`${k}: ${v}`);
+    }
+  }
+
   let finalMime = "";
 
   if (attachments.length > 0) {
     // multipart/mixed: najpierw alternative, potem każdy załącznik
     const mixBoundary = "bndry_mix_" + Math.random().toString(36).slice(2);
-
     headers.push(`Content-Type: multipart/mixed; boundary="${mixBoundary}"`);
 
     const parts = [
@@ -172,7 +178,7 @@ function buildRawEmail({ to, subject, text, html, from, attachments = [] }) {
       `--${mixBoundary}`,
       `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
       "",
-      altPart.trim(), // cały alternative jako jeden part
+      altPart.trim(),
     ];
 
     for (const att of attachments) {
@@ -192,10 +198,9 @@ function buildRawEmail({ to, subject, text, html, from, attachments = [] }) {
     }
 
     parts.push(`--${mixBoundary}--`, "");
-
     finalMime = headers.join("\r\n") + "\r\n" + parts.join("\r\n");
   } else {
-    // tylko multipart/alternative (bez załączników)
+    // tylko multipart/alternative
     headers.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
     finalMime = headers.join("\r\n") + "\r\n\r\n" + altPart;
   }
