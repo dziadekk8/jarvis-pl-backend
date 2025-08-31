@@ -12,13 +12,13 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@upstash/redis": "^1.30.0",
+    "@upstash/redis": "^1.35.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "googleapis": "^159.0.0",
-    "swagger-ui-express": "^5.0.0",
-    "yaml": "^2.4.2"
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.8.1"
   },
   "license": "MIT"
 }

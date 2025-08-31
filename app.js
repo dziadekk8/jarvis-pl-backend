@@ -1,916 +1,932 @@
-// app.js
-import express from "express";
-import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
-import { google } from "googleapis";
-import crypto from "crypto";
-import { Redis } from "@upstash/redis";
-import swaggerUi from "swagger-ui-express";
 
+// app.js — Jarvis-PL backend (ESM).
+// Features: Health, OAuth2 (Google), Calendar R/W + Watch/push, Gmail send/reply/list,
+// Drive search, Places (New) search/details, Swagger UI (/docs), Redis (Upstash) for tokens/watch state.
+// No express-session. Uses global fetch (Node 20+).
+//
+// package.json deps expected:
+//  "express": "^5.1.0",
+//  "cors": "^2.8.5",
+//  "dotenv": "^17.2.1",
+//  "googleapis": "^159.0.0",
+//  "yaml": "^2.8.1",
+//  "swagger-ui-express": "^5.0.1",
+//  "@upstash/redis": "^1.35.3"
+//
+// ENV (Render / .env):
+//  BASE_URL=https://ai.aneuroasystent.pl
+//  GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+//  GOOGLE_CLIENT_SECRET=...
+//  ADMIN_TOKEN=strong_admin_secret
+//  WATCH_TOKEN=dev-token
+//  GOOGLE_MAPS_API_KEY=...   (Places API NEW must be enabled)
+//  UPSTASH_REDIS_REST_URL=...
+//  UPSTASH_REDIS_REST_TOKEN=...
+//  TZ=Europe/Warsaw (optional)
 
-dotenv.config();
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { google } from 'googleapis';
+import YAML from 'yaml';
+import swaggerUi from 'swagger-ui-express';
+import crypto from 'crypto';
+import { Redis } from '@upstash/redis';
 
-// ── Redis (Upstash) ────────────────────────────────────────────────
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
-});
-const TOKENS_KEY = process.env.REDIS_TOKENS_KEY || "jarvis:tokens";
-const PUSH_KEY   = process.env.REDIS_PUSH_KEY   || "jarvis:push";
-
-async function kvGet(key){ try { return await redis.get(key); } catch(e){ console.error("redis.get", e?.message||e); return null; } }
-async function kvSet(key,val){ try { await redis.set(key, val); } catch(e){ console.error("redis.set", e?.message||e); } }
-async function kvDel(key){ try { await redis.del(key); } catch(e){ console.error("redis.del", e?.message||e); } }
-
-// --- Globalne łapacze błędów / logi startowe ---
-process.on("uncaughtException", (err) => console.error("❌ uncaughtException:", err));
-process.on("unhandledRejection", (reason) => console.error("❌ unhandledRejection:", reason));
-
-// ── ŚCIEŻKI I PODSTAWY ──────────────────────────────────────────────
+// __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
+
+// App + middleware
 const app = express();
+app.use(cors());
+app.use(express.json({ limit: '20mb' })); // handle attachments
+app.use(express.urlencoded({ extended: true }));
 
-const PORT = process.env.PORT || 8080;
-const TZ = "Europe/Warsaw";
+// Config
+const PORT         = process.env.PORT || 8080;
+const BASE_URL     = process.env.BASE_URL || `http://localhost:${PORT}`;
+const TZ           = process.env.TZ || 'Europe/Warsaw';
+const ADMIN_TOKEN  = process.env.ADMIN_TOKEN || '';
+const WATCH_TOKEN  = process.env.WATCH_TOKEN || '';
+const MAPS_KEY     = process.env.GOOGLE_MAPS_API_KEY || '';
 
-// Body parser (większy limit na załączniki)
-app.use(express.json({ limit: "25mb" }));
-app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+console.log(`✅ Serwer startuje: ${BASE_URL}`);
+console.log(`DEBUG REDIRECT_URI = ${new URL('/oauth2/callback', BASE_URL).toString()}`);
+console.log('MAPS KEY set?:', Boolean(MAPS_KEY));
 
-// Proste endpointy zdrowia i specyfikacji
-app.get("/", (_req, res) => res.send("OK"));
-app.get("/health", (_req, res) => res.json({ ok: true }));
-app.get("/openapi-public.yaml", (_req, res) => {
-  res.type("text/yaml; charset=utf-8");
-  res.sendFile(path.join(__dirname, "openapi-public.yaml"));
-});
+// Redis (Upstash) — optional, but recommended
+let redis = null;
+try {
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+  }
+} catch (e) {
+  console.error('Redis init error:', e?.message || e);
+}
 
+const TOKENS_KEY = 'jarvis:tokens';
+const PUSH_KEY   = 'jarvis:push';
 
-// Swagger UI – interaktywna dokumentacja pod /docs
-app.use(
-  "/docs",
-  swaggerUi.serve,
-  swaggerUi.setup(null, {
-    swaggerOptions: { url: "/openapi-public.yaml" }, // wskazanie na plik YAML
-    customSiteTitle: "Jarvis-PL API Docs",
-    customCss: ".swagger-ui .topbar { display:none }"
-  })
-);
+async function kvGet(key) {
+  if (!redis) return null;
+  try { return await redis.get(key); } catch { return null; }
+}
+async function kvSet(key, value) {
+  if (!redis) return;
+  try { await redis.set(key, value); } catch {}
+}
+async function kvDel(key) {
+  if (!redis) return;
+  try { await redis.del(key); } catch {}
+}
 
-// (opcjonalnie) przyjazny redirect z /docs na /docs/
-app.get("/docs", (_req, res) => res.redirect("/docs/"));
+// OAuth2
+const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const REDIRECT_URI  = new URL('/oauth2/callback', BASE_URL).toString();
 
-app.get("/openapi.yaml", (_req, res) => {
-  res.type("text/yaml; charset=utf-8");
-  res.sendFile(path.join(__dirname, "openapi.yaml"));
-});
-app.get("/debug/routes", (_req, res) => {
-  const routes = app._router?.stack
-    ?.filter((r) => r.route && r.route.path)
-    ?.map((r) => ({ method: Object.keys(r.route.methods)[0]?.toUpperCase(), path: r.route.path })) || [];
-  res.json(routes);
-});
-
-// ── GOOGLE OAUTH2 ──────────────────────────────────────────────────
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.send",
-  "https://www.googleapis.com/auth/drive.readonly",
-  "https://www.googleapis.com/auth/calendar" // pełny R/W do kalendarza
-];
-
-const oAuth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  (process.env.GOOGLE_REDIRECT_URI || "").trim()
-);
-
-// tokens bootstrap (persistent in Redis)
+const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 let userTokens = null;
-(async () => { userTokens = (await kvGet(TOKENS_KEY)) || null; })();
-oAuth2Client.on("tokens", async (tokens) => {
-  userTokens = { ...(userTokens || {}), ...tokens };
-  await kvSet(TOKENS_KEY, userTokens);
-});
 
-// ── POMOCNICZE ─────────────────────────────────────────────────────
-function isoDayRange(offsetDays = 0) {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(now);
-  const y = Number(parts.find((p) => p.type === "year").value);
-  const m = Number(parts.find((p) => p.type === "month").value);
-  const d = Number(parts.find((p) => p.type === "day").value);
-  const startUTC = new Date(Date.UTC(y, m - 1, d + offsetDays, 0, 0, 0, 0));
-  const endUTC   = new Date(Date.UTC(y, m - 1, d + offsetDays + 1, 0, 0, 0, 0));
-  return { timeMin: startUTC.toISOString(), timeMax: endUTC.toISOString() };
-}
-const fmtTime = (iso) => {
-  try { if (!iso) return "brak"; const d = new Date(iso); if (isNaN(d)) return "brak";
-    return new Intl.DateTimeFormat("pl-PL", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }).format(d);
-  } catch { return "brak"; }
-};
-const fmtDate = (iso) => {
-  try { if (!iso) return "brak"; const d = new Date(iso); if (isNaN(d)) return "brak";
-    return new Intl.DateTimeFormat("pl-PL", { timeZone: TZ, dateStyle: "long" }).format(d);
-  } catch { return "brak"; }
-};
-
-// Gmail: MIME builder – HTML + plain text + attachments
-function buildRawEmail({ to, subject, text, html, from, attachments = [], headersExtra = {} }) {
-  const encSubject = subject ? `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=` : "";
-  const fallbackText = text || (html ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
-  const b64wrap = (s) => (s || "").match(/.{1,76}/g)?.join("\r\n") || "";
-  const altBoundary = "bndry_alt_" + Date.now().toString(36);
-  const altPart = [
-    `--${altBoundary}`,
-    "Content-Type: text/plain; charset=UTF-8",
-    "Content-Transfer-Encoding: 8bit",
-    "", fallbackText || "", "",
-    `--${altBoundary}`,
-    "Content-Type: text/html; charset=UTF-8",
-    "Content-Transfer-Encoding: 8bit",
-    "", html || `<html><body><pre style="font-family: inherit">${(text || "").replace(/</g, "&lt;").trim()}</pre></body></html>`, "",
-    `--${altBoundary}--`, ""
-  ].join("\r\n");
-
-  let headers = [ `To: ${to}`, from ? `From: ${from}` : "", `Subject: ${encSubject}`, "MIME-Version: 1.0" ].filter(Boolean);
-  if (headersExtra && typeof headersExtra === "object") {
-    for (const [k, v] of Object.entries(headersExtra)) if (v) headers.push(`${k}: ${v}`);
-  }
-
-  let finalMime = "";
-  if (attachments.length > 0) {
-    const mixBoundary = "bndry_mix_" + Math.random().toString(36).slice(2);
-    headers.push(`Content-Type: multipart/mixed; boundary="${mixBoundary}"`);
-    const parts = [ "", `--${mixBoundary}`, `Content-Type: multipart/alternative; boundary="${altBoundary}"`, "", altPart.trim() ];
-    for (const att of attachments) {
-      const filename = att.filename || "attachment";
-      const mimeType = att.mimeType || "application/octet-stream";
-      const dataB64 = att.data || att.dataBase64 || "";
-      parts.push(`--${mixBoundary}`,
-        `Content-Type: ${mimeType}; name="${filename}"`,
-        "Content-Transfer-Encoding: base64",
-        `Content-Disposition: attachment; filename="${filename}"`,
-        "", b64wrap(dataB64), "");
-    }
-    parts.push(`--${mixBoundary}--`, "");
-    finalMime = headers.join("\r\n") + "\r\n" + parts.join("\r\n");
+// Warm-load tokens from Redis on startup (if present)
+(async () => {
+  const t = await kvGet(TOKENS_KEY);
+  if (t && (t.access_token || t.refresh_token)) {
+    userTokens = t;
+    oAuth2Client.setCredentials(userTokens);
+    console.log('Tokens loaded from Redis.');
   } else {
-    headers.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
-    finalMime = headers.join("\r\n") + "\r\n\r\n" + altPart;
+    console.log('No tokens in Redis at startup.');
   }
+})();
 
-  return Buffer.from(finalMime, "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+function authUrl() {
+  const scopes = [
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/drive.readonly',
+  ];
+  return oAuth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: scopes,
+  });
 }
 
-// ── ROUTES: AUTH ───────────────────────────────────────────────────
-app.get("/oauth2/start", (_req, res) => {
-  const url = oAuth2Client.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: SCOPES });
-  res.redirect(url);
+// Health
+app.get('/health', (_req, res) => {
+  res.json({ ok: true });
 });
 
-app.get("/oauth2/callback", async (req, res) => {
+// OAuth2 start
+app.get('/oauth2/start', (_req, res) => {
+  res.redirect(authUrl());
+});
+
+// OAuth2 callback
+app.get('/oauth2/callback', async (req, res) => {
   const code = req.query.code;
-  if (!code) return res.status(400).send("Brak ?code w URL");
+  if (!code) return res.status(400).send('Brak ?code w URL');
   try {
     const { tokens } = await oAuth2Client.getToken(code);
     userTokens = tokens;
-    oAuth2Client.setCredentials(userTokens);
-    await kvSet(TOKENS_KEY, userTokens); // zapis do Redis
-    res.send("✅ Autoryzacja OK. Token zapisany w Redis. Sprawdź /auth/status");
+    oAuth2Client.setCredentials(tokens);
+    await kvSet(TOKENS_KEY, tokens);
+    res.send('✅ Autoryzacja OK. Token zapisany. Sprawdź /auth/status');
   } catch (e) {
-    console.error("Błąd pobierania tokenów:", e);
-    res.status(500).send("❌ Błąd pobierania tokenów");
+    console.error('Błąd pobierania tokenów:', e?.response?.data || e?.message || e);
+    res.status(500).send('❌ Błąd pobierania tokenów');
   }
 });
 
-app.get("/auth/status", async (_req, res) => {
-  if (!userTokens) return res.send("🔴 Brak tokenów. Zaloguj: /oauth2/start");
-  const hasRefresh = Boolean(userTokens.refresh_token);
-  res.send(`🟢 Tokeny obecne. refresh_token: ${hasRefresh ? "TAK" : "NIE"}`);
+// Auth status
+app.get('/auth/status', async (_req, res) => {
+  const t = userTokens || (await kvGet(TOKENS_KEY));
+  if (!t) return res.send('🔴 Brak tokenów. Zaloguj: /oauth2/start');
+  const hasRefresh = Boolean(t.refresh_token);
+  res.send(`🟢 Tokeny obecne. refresh_token: ${hasRefresh ? 'TAK' : 'NIE'}`);
 });
 
-app.get("/auth/tokeninfo", async (_req, res) => {
+// Auth reset (admin)
+app.get('/auth/reset', async (req, res) => {
   try {
-    if (!userTokens?.access_token) return res.status(400).json({ error: "Brak access_token – zaloguj: /oauth2/start" });
-    const oauth2 = google.oauth2({ version: "v2", auth: oAuth2Client });
-    const info = await oauth2.tokeninfo({ access_token: userTokens.access_token });
-    return res.json({
-      scopes: (info.data?.scope || "").split(" "),
-      expires_in: info.data?.expires_in,
-      issued_to: info.data?.issued_to,
-      audience: info.data?.audience,
-    });
-  } catch (e) {
-    console.error("tokeninfo error:", e?.response?.data || e);
-    return res.status(500).json({ error: "Nie można pobrać tokeninfo", details: e?.response?.data?.error_description || e?.message || "unknown" });
-  }
-});
-
-// RESET autoryzacji i webhooka (tylko dla admina)
-app.get("/auth/reset", async (req, res) => {
-  try {
-    const provided = req.get("x-admin-token") || req.get("x-admin");
-    const expected  = process.env.ADMIN_TOKEN || process.env.SESSION_SECRET || process.env.WATCH_TOKEN;
-    if (!expected || provided !== expected) {
-      return res.status(403).json({ error: "forbidden", message: "Brak lub zły x-admin-token" });
+    const token = req.get('x-admin-token') || '';
+    if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
+      return res.status(403).json({ error: 'forbidden' });
     }
     userTokens = null;
-    try { oAuth2Client.setCredentials(null); } catch {}
     await kvDel(TOKENS_KEY);
     await kvDel(PUSH_KEY);
-    CAL_PUSH = { channelId: null, resourceId: null, expiration: null, syncToken: null, lastChanges: [], history: [] };
-    return res.json({ ok: true, cleared: ["TOKENS_KEY", "PUSH_KEY"] });
+    res.json({ ok: true, cleared: [TOKENS_KEY, PUSH_KEY] });
   } catch (e) {
-    const msg = e?.response?.data || e?.message || "unknown";
-    console.error("auth/reset error:", msg);
-    return res.status(500).json({ error: "auth_reset_failed", details: msg });
+    res.status(500).json({ ok: false, error: e?.message || 'reset_failed' });
   }
 });
 
-// ── ROUTES: CALENDAR ───────────────────────────────────────────────
-app.get("/calendar/events/json", async (_req, res) => {
-  try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji", fix: "Przejdź /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const events = await calendar.events.list({
-      calendarId: "primary",
-      timeMin: new Date().toISOString(),
-      maxResults: 10,
-      singleEvents: true,
-      orderBy: "startTime",
-    });
-    const result = (events.data.items || []).map((ev) => ({
-      id: ev.id,
-      summary: ev.summary || "(bez tytułu)",
-      start: ev.start?.dateTime || ev.start?.date || null,
-    }));
-    return res.json({ events: result });
-  } catch (e) {
-    console.error("calendar/events error:", e?.response?.data || e);
-    const status = e?.response?.status || e?.code || 500;
-    return res.status(Number.isInteger(status) ? status : 500).json({
-      error: "Błąd pobierania wydarzeń",
-      details: e?.response?.data?.error?.message || e?.message || "unknown",
-    });
+// Helper: ensure Google auth
+function ensureAuthOr401(res) {
+  if (!userTokens) {
+    res.status(401).json({ error: 'Brak autoryzacji – /oauth2/start' });
+    return false;
   }
-});
-
-app.get("/calendar/event", async (req, res) => {
-  const id = (req.query.id || "").trim();
-  if (!id) return res.status(400).json({ error: "Brak parametru ?id" });
-  try {
-    oAuth2Client.setCredentials(userTokens);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const ev = await calendar.events.get({ calendarId: "primary", eventId: id });
-    return res.json(ev.data);
-  } catch (e) {
-    const status = e?.code || e?.response?.status || 500;
-    if (status === 404) return res.status(404).json({ error: "Wydarzenie nie znalezione", id });
-    return res.status(500).json({ error: "Błąd pobierania wydarzenia" });
-  }
-});
-
-app.get("/calendar/today", async (_req, res) => {
-  try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji", fix: "Wejdź na /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-    const { timeMin, timeMax } = isoDayRange(0);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const events = await calendar.events.list({ calendarId: "primary", timeMin, timeMax, singleEvents: true, orderBy: "startTime" });
-    const result = (events.data.items || []).map((ev) => {
-      const startISO = ev.start?.dateTime || ev.start?.date || null;
-      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(startISO)})`;
-    });
-    res.json({ today: result });
-  } catch (e) {
-    const status = e?.response?.status || e?.code || 500;
-    res.status(Number.isInteger(status) ? status : 500).json({ error: "Błąd /calendar/today", details: e?.response?.data?.error?.message || e?.message || "unknown" });
-  }
-});
-
-app.get("/calendar/tomorrow", async (_req, res) => {
-  try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji", fix: "Wejdź na /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-    const { timeMin, timeMax } = isoDayRange(1);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const events = await calendar.events.list({ calendarId: "primary", timeMin, timeMax, singleEvents: true, orderBy: "startTime" });
-    const result = (events.data.items || []).map((ev) => {
-      const startISO = ev.start?.dateTime || ev.start?.date || null;
-      return `${fmtTime(startISO)} - ${ev.summary || "Bez tytułu"} (${fmtDate(startISO)})`;
-    });
-    res.json({ tomorrow: result });
-  } catch (e) {
-    const status = e?.response?.status || e?.code || 500;
-    res.status(Number.isInteger(status) ? status : 500).json({ error: "Błąd /calendar/tomorrow", details: e?.response?.data?.error?.message || e?.message || "unknown" });
-  }
-});
-
-// Pomocniczo: budowa pól start/end (obsługa all-day vs dateTime)
-function makeStartEnd({ startISO, endISO, timeZone = "Europe/Warsaw" }) {
-  const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
-  const start = startISO ? (isDate(startISO) ? { date: startISO, timeZone } : { dateTime: startISO, timeZone }) : undefined;
-  const end   = endISO   ? (isDate(endISO)   ? { date: endISO,   timeZone } : { dateTime: endISO,   timeZone }) : undefined;
-  return { start, end };
+  oAuth2Client.setCredentials(userTokens);
+  return true;
 }
 
-// CREATE
-app.post("/calendar/create", async (req, res) => {
+// ==== Calendar helpers ====
+function makeEventTimes({ startISO, endISO, timeZone }) {
+  if (!startISO || !endISO) return {};
+  if (/^\d{4}-\d{2}-\d{2}$/.test(startISO) && /^\d{4}-\d{2}-\d{2}$/.test(endISO)) {
+    // all-day event
+    return { start: { date: startISO }, end: { date: endISO } };
+  }
+  return {
+    start: { dateTime: startISO, timeZone: timeZone || TZ },
+    end:   { dateTime: endISO,   timeZone: timeZone || TZ },
+  };
+}
+function makeConference(createMeet) {
+  if (!createMeet) return undefined;
+  return {
+    createRequest: {
+      requestId: crypto.randomUUID(),
+      conferenceSolutionKey: { type: 'hangoutsMeet' },
+    }
+  };
+}
+function mapAttendees(emails) {
+  if (!Array.isArray(emails) || !emails.length) return undefined;
+  return emails.map(e => ({ email: e }));
+}
+
+// List upcoming (compact)
+app.get('/calendar/events/json', async (_req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-
-    const {
-      summary, description, location, startISO, endISO,
-      timeZone = "Europe/Warsaw",
-      attendeesEmails = [],
-      remindersMinutes,
-      recurrence = [],
-      createMeet = false,
-      sendUpdates = "none",
-    } = req.body || {};
-    if (!summary || !startISO || !endISO) return res.status(400).json({ error: "Wymagane: summary, startISO, endISO" });
-
-    const { start, end } = makeStartEnd({ startISO, endISO, timeZone });
-    const event = { summary, description, location, start, end };
-
-    if (Array.isArray(attendeesEmails) && attendeesEmails.length > 0) {
-      event.attendees = attendeesEmails.filter((e) => typeof e === "string" && e.includes("@")).map((email) => ({ email }));
-    }
-    if (typeof remindersMinutes === "number" && remindersMinutes >= 0) {
-      event.reminders = { useDefault: false, overrides: [{ method: "popup", minutes: Math.floor(remindersMinutes) }] };
-    }
-    if (Array.isArray(recurrence) && recurrence.length > 0) event.recurrence = recurrence;
-
-    let confOpt = {};
-    if (createMeet === true) {
-      event.conferenceData = { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: "hangoutsMeet" } } };
-      confOpt = { conferenceDataVersion: 1 };
-    }
-
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const resp = await calendar.events.insert({ calendarId: "primary", requestBody: event, sendUpdates, ...confOpt });
-
-    return res.json({
-      id: resp.data.id, htmlLink: resp.data.htmlLink, status: resp.data.status,
-      start: resp.data.start, end: resp.data.end, summary: resp.data.summary,
-      hangoutLink: resp.data.hangoutLink || null, conferenceData: resp.data.conferenceData || null,
+    if (!ensureAuthOr401(res)) return;
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    const now = new Date().toISOString();
+    const resp = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: now,
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 50,
     });
+    const events = (resp.data.items || []).map(ev => ({
+      id: ev.id,
+      summary: ev.summary || '',
+      start: ev.start?.dateTime || ev.start?.date || null,
+    }));
+    res.json({ events });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/create error:", details);
-    return res.status(status).json({ error: "calendar_create_failed", status, details });
+    res.status(status).json({ error: 'calendar_list_failed', status });
   }
 });
 
-// UPDATE (partial)
-app.post("/calendar/update", async (req, res) => {
+// Single event
+app.get('/calendar/event', async (req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
+    if (!ensureAuthOr401(res)) return;
+    const id = req.query.id;
+    if (!id) return res.status(400).json({ error: 'missing_id' });
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    const resp = await calendar.events.get({ calendarId: 'primary', eventId: id });
+    res.json(resp.data || {});
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    res.status(status).json({ error: 'calendar_get_failed', status, details: e?.response?.data });
+  }
+});
 
+// Create event
+app.post('/calendar/create', async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
+    const {
+      summary, description, location,
+      startISO, endISO, timeZone,
+      attendeesEmails, remindersMinutes,
+      recurrence, createMeet, sendUpdates,
+    } = req.body || {};
+
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    const requestBody = {
+      summary,
+      description,
+      location,
+      ...makeEventTimes({ startISO, endISO, timeZone }),
+      attendees: mapAttendees(attendeesEmails),
+      recurrence,
+      reminders: typeof remindersMinutes === 'number'
+        ? { useDefault: false, overrides: [{ method: 'popup', minutes: remindersMinutes }] }
+        : undefined,
+      conferenceData: makeConference(createMeet),
+    };
+
+    const resp = await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody,
+      conferenceDataVersion: requestBody.conferenceData ? 1 : 0,
+      sendUpdates: sendUpdates || 'none',
+    });
+    res.json(resp.data || {});
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    res.status(status).json({ error: 'calendar_create_failed', status, details: e?.response?.data });
+  }
+});
+
+// Update (patch)
+app.post('/calendar/update', async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
     const {
       id, summary, description, location,
-      startISO, endISO, timeZone = "Europe/Warsaw",
-      attendeesEmails = [],
-      remindersMinutes,
-      recurrence,
-      createMeet = undefined,
-      sendUpdates = "none",
+      startISO, endISO, timeZone,
+      attendeesEmails, remindersMinutes,
+      recurrence, createMeet, sendUpdates,
     } = req.body || {};
-    if (!id) return res.status(400).json({ error: "Wymagane pole: id" });
 
-    const body = {};
-    if (summary !== undefined) body.summary = summary;
-    if (description !== undefined) body.description = description;
-    if (location !== undefined) body.location = location;
-    if (startISO || endISO) {
-      const { start, end } = makeStartEnd({ startISO, endISO, timeZone });
-      if (start) body.start = start;
-      if (end) body.end = end;
+    if (!id) return res.status(400).json({ error: 'missing_id' });
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+
+    const requestBody = {};
+    if (summary !== undefined) requestBody.summary = summary;
+    if (description !== undefined) requestBody.description = description;
+    if (location !== undefined) requestBody.location = location;
+    if (startISO || endISO) Object.assign(requestBody, makeEventTimes({ startISO, endISO, timeZone }));
+    if (attendeesEmails !== undefined) requestBody.attendees = mapAttendees(attendeesEmails);
+    if (recurrence !== undefined) requestBody.recurrence = recurrence;
+    if (typeof remindersMinutes === 'number') {
+      requestBody.reminders = { useDefault: false, overrides: [{ method: 'popup', minutes: remindersMinutes }] };
     }
-    if (Array.isArray(attendeesEmails) && attendeesEmails.length > 0) {
-      body.attendees = attendeesEmails.filter((e) => typeof e === "string" && e.includes("@")).map((email) => ({ email }));
-    }
-    if (typeof remindersMinutes === "number" && remindersMinutes >= 0) {
-      body.reminders = { useDefault: false, overrides: [{ method: "popup", minutes: Math.floor(remindersMinutes) }] };
-    }
-    if (recurrence !== undefined) {
-      if (Array.isArray(recurrence)) body.recurrence = recurrence;
-      else return res.status(400).json({ error: "recurrence musi być tablicą stringów" });
-    }
-    let confOpt = {};
-    if (createMeet === true) {
-      body.conferenceData = { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: "hangoutsMeet" } } };
-      confOpt = { conferenceDataVersion: 1 };
+    if (typeof createMeet === 'boolean') {
+      requestBody.conferenceData = makeConference(createMeet);
     }
 
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const resp = await calendar.events.patch({ calendarId: "primary", eventId: id, requestBody: body, sendUpdates, ...confOpt });
-
-    return res.json({
-      id: resp.data.id, htmlLink: resp.data.htmlLink, status: resp.data.status,
-      start: resp.data.start, end: resp.data.end, summary: resp.data.summary, updated: resp.data.updated,
-      hangoutLink: resp.data.hangoutLink || null, conferenceData: resp.data.conferenceData || null,
+    const resp = await calendar.events.patch({
+      calendarId: 'primary',
+      eventId: id,
+      requestBody,
+      conferenceDataVersion: requestBody.conferenceData ? 1 : 0,
+      sendUpdates: sendUpdates || 'none',
     });
+    res.json(resp.data || {});
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/update error:", details);
-    return res.status(status).json({ error: "calendar_update_failed", status, details });
+    res.status(status).json({ error: 'calendar_update_failed', status, details: e?.response?.data });
   }
 });
 
-// DELETE
-app.post("/calendar/delete", async (req, res) => {
+// Delete
+app.post('/calendar/delete', async (req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-    const { id, sendUpdates = "none" } = req.body || {};
-    if (!id) return res.status(400).json({ error: "Wymagane pole: id" });
-
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    await calendar.events.delete({ calendarId: "primary", eventId: id, sendUpdates });
-    return res.json({ ok: true, deletedId: id });
+    if (!ensureAuthOr401(res)) return;
+    const { id, sendUpdates } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'missing_id' });
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: id,
+      sendUpdates: sendUpdates || 'none',
+    });
+    res.json({ ok: true, deletedId: id });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/delete error:", details);
-    return res.status(status).json({ error: "calendar_delete_failed", status, details });
+    res.status(status).json({ error: 'calendar_delete_failed', status, details: e?.response?.data });
   }
 });
 
-// QUICKADD
-app.post("/calendar/quickadd", async (req, res) => {
+// QuickAdd
+app.post('/calendar/quickadd', async (req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-    const { text, sendUpdates = "none" } = req.body || {};
-    if (!text || !text.trim()) return res.status(400).json({ error: "Wymagane pole: text" });
-
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const resp = await calendar.events.quickAdd({ calendarId: "primary", text, sendUpdates });
-    return res.json({ id: resp.data.id, htmlLink: resp.data.htmlLink, status: resp.data.status, start: resp.data.start, end: resp.data.end, summary: resp.data.summary });
+    if (!ensureAuthOr401(res)) return;
+    const { text, sendUpdates } = req.body || {};
+    if (!text) return res.status(400).json({ error: 'missing_text' });
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    const resp = await calendar.events.quickAdd({
+      calendarId: 'primary',
+      text,
+      sendUpdates: sendUpdates || 'none',
+    });
+    res.json(resp.data || {});
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/quickadd error:", details);
-    return res.status(status).json({ error: "calendar_quickadd_failed", status, details });
+    res.status(status).json({ error: 'calendar_quickadd_failed', status, details: e?.response?.data });
   }
 });
 
-// INSTANCES (dla serii)
-app.get("/calendar/instances", async (req, res) => {
+// Instances (recurring occurrences)
+app.get('/calendar/instances', async (req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-    const { id, timeMin, timeMax } = req.query || {};
-    if (!id) return res.status(400).json({ error: "Wymagane pole query: id (SERIES_ID)" });
-
-    const now = new Date();
-    const startDef = timeMin || new Date(now.setHours(0,0,0,0)).toISOString();
-    const endDef   = timeMax || new Date(Date.now() + 30*24*3600*1000).toISOString();
-
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    if (!ensureAuthOr401(res)) return;
+    const { id, timeMin, timeMax } = req.query;
+    if (!id) return res.status(400).json({ error: 'missing_id' });
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
     const resp = await calendar.events.instances({
-      calendarId: "primary", eventId: id, timeMin: startDef, timeMax: endDef, showDeleted: true, maxResults: 2500,
+      calendarId: 'primary',
+      eventId: id,
+      timeMin,
+      timeMax,
+      singleEvents: true,
     });
-
-    const items = (resp.data.items || []).map(ev => ({
-      id: ev.id, recurringEventId: ev.recurringEventId, summary: ev.summary, status: ev.status,
-      start: ev.start, end: ev.end, htmlLink: ev.htmlLink,
-    }));
-
-    return res.json({ seriesId: id, timeMin: startDef, timeMax: endDef, instances: items });
+    res.json({
+      seriesId: id,
+      timeMin: timeMin || null,
+      timeMax: timeMax || null,
+      instances: resp.data.items || [],
+    });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/instances error:", details);
-    return res.status(status).json({ error: "calendar_instances_failed", status, details });
+    res.status(status).json({ error: 'calendar_instances_failed', status, details: e?.response?.data });
   }
 });
 
-// Free/Busy
-app.post("/calendar/freebusy", async (req, res) => {
+// Freebusy
+app.post('/calendar/freebusy', async (req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-
-    const { timeMin, timeMax, attendeesCalendars = [] } = req.body || {};
-    const start = timeMin ? new Date(timeMin) : new Date();
-    const end   = timeMax ? new Date(timeMax) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
-    if (isNaN(start) || isNaN(end) || end <= start) return res.status(400).json({ error: "Nieprawidłowe timeMin/timeMax" });
-
-    const ids = Array.from(new Set(["primary", ...attendeesCalendars])).map(id => ({ id }));
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const resp = await calendar.freebusy.query({ requestBody: { timeMin: start.toISOString(), timeMax: end.toISOString(), items: ids } });
-
-    const calendars = resp.data.calendars || {};
-    const allBusy = [];
-    Object.values(calendars).forEach(c => { (c.busy || []).forEach(b => allBusy.push({ start: new Date(b.start), end: new Date(b.end) })); });
-    allBusy.sort((a,b)=>a.start-b.start);
-    const merged = [];
-    for (const iv of allBusy) {
-      if (!merged.length || iv.start > merged[merged.length-1].end) merged.push({ ...iv });
-      else if (iv.end > merged[merged.length-1].end) merged[merged.length-1].end = iv.end;
-    }
-    return res.json({
-      timeMin: start.toISOString(), timeMax: end.toISOString(),
-      calendars, busyCombined: merged.map(iv => ({ start: iv.start.toISOString(), end: iv.end.toISOString() })),
-    });
+    if (!ensureAuthOr401(res)) return;
+    const { timeMin, timeMax, attendeesCalendars } = req.body || {};
+    if (!timeMin || !timeMax) return res.status(400).json({ error: 'missing_time_range' });
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    const items = (attendeesCalendars && attendeesCalendars.length)
+      ? attendeesCalendars.map(id => ({ id }))
+      : [{ id: 'primary' }];
+    const fb = await calendar.freebusy.query({ requestBody: { timeMin, timeMax, items } });
+    const calendars = fb.data.calendars || {};
+    const allBusy = Object.values(calendars).flatMap(c => c.busy || []);
+    res.json({ timeMin: fb.data.timeMin, timeMax: fb.data.timeMax, calendars, busyCombined: allBusy });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/freebusy error:", details);
-    return res.status(status).json({ error: "calendar_freebusy_failed", status, details });
+    res.status(status).json({ error: 'calendar_freebusy_failed', status, details: e?.response?.data });
   }
 });
 
 // Suggest slots
-app.post("/calendar/suggest", async (req, res) => {
+function parseHHMM(s) {
+  const m = /^(\d{2}):(\d{2})$/.exec(s || '');
+  if (!m) return null;
+  return { h: Number(m[1]), m: Number(m[2]) };
+}
+app.post('/calendar/suggest', async (req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-
+    if (!ensureAuthOr401(res)) return;
     const {
       timeMin, timeMax, durationMinutes,
-      attendeesCalendars = [],
-      workHours = { start: "08:00", end: "18:00", timeZone: "Europe/Warsaw" },
+      attendeesCalendars,
+      workHours = { start: '08:00', end: '18:00', timeZone: TZ },
       includeWeekends = false,
-      bufferMinutesBefore = 0, bufferMinutesAfter = 0,
-      stepMinutes = 30, limit = 20,
+      bufferMinutesBefore = 0,
+      bufferMinutesAfter = 0,
+      stepMinutes = 30,
+      limit = 20,
     } = req.body || {};
+    if (!durationMinutes) return res.status(400).json({ error: 'missing_duration' });
 
-    if (!durationMinutes || durationMinutes <= 0) return res.status(400).json({ error: "Wymagane: durationMinutes > 0" });
+    // reuse our freebusy endpoint
+    const fbResp = await (await fetch(new URL('/calendar/freebusy', BASE_URL).toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timeMin, timeMax, attendeesCalendars }),
+    })).json();
+    const busy = fbResp.busyCombined || [];
 
-    const TZloc = workHours.timeZone || "Europe/Warsaw";
-    const start = timeMin ? new Date(timeMin) : new Date();
-    const end   = timeMax ? new Date(timeMax) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
-    if (isNaN(start) || isNaN(end) || end <= start) return res.status(400).json({ error: "Nieprawidłowe timeMin/timeMax" });
+    const startBound = timeMin ? new Date(timeMin) : new Date();
+    const endBound   = timeMax ? new Date(timeMax) : new Date(Date.now() + 7 * 86400000);
 
-    const ids = Array.from(new Set(["primary", ...attendeesCalendars])).map(id => ({ id }));
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    const fb = await calendar.freebusy.query({ requestBody: { timeMin: start.toISOString(), timeMax: end.toISOString(), items: ids } });
-
-    const busy = [];
-    Object.values(fb.data.calendars || {}).forEach(c => {
-      (c.busy || []).forEach(b => {
-        const s = new Date(b.start).getTime() - bufferMinutesBefore * 60000;
-        const e = new Date(b.end).getTime()   + bufferMinutesAfter  * 60000;
-        busy.push({ start: new Date(s), end: new Date(e) });
-      });
-    });
-    busy.sort((a,b)=>a.start-b.start);
-    const merged = [];
-    for (const iv of busy) {
-      if (!merged.length || iv.start > merged[merged.length-1].end) merged.push({ ...iv });
-      else if (iv.end > merged[merged.length-1].end) merged[merged.length-1].end = iv.end;
-    }
-
-    const parseHM = (s) => { const [h,m]=String(s).split(":").map(Number); return {h:h||0,m:m||0}; };
-    const whStart = parseHM(workHours.start || "08:00");
-    const whEnd   = parseHM(workHours.end   || "18:00");
-    const dayStartTZ = (d) => { const x = new Date(d.toLocaleString("en-CA", { timeZone: TZloc })); x.setHours(0,0,0,0); return x; };
-    const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+    const workStart = parseHHMM(workHours.start) || { h: 8, m: 0 };
+    const workEnd   = parseHHMM(workHours.end)   || { h: 18, m: 0 };
 
     const slots = [];
-    let cursor = new Date(start);
-    const stepMS = stepMinutes * 60000;
-    const durMS  = durationMinutes * 60000;
+    for (let day = new Date(startBound); day < endBound; day = new Date(day.getTime() + 86400000)) {
+      const dow = day.getDay();
+      if (!includeWeekends && (dow === 0 || dow === 6)) continue;
 
-    while (cursor < end && slots.length < limit) {
-      const ds = dayStartTZ(cursor);
-      const we = ds.getDay(); // 0 nd, 6 sb
-      if (!includeWeekends && (we === 0 || we === 6)) { cursor = addDays(ds, 1); continue; }
+      const dayStart = new Date(day); dayStart.setHours(workStart.h, workStart.m, 0, 0);
+      const dayEnd   = new Date(day); dayEnd.setHours(workEnd.h,   workEnd.m,   0, 0);
 
-      const windowStart = new Date(ds); windowStart.setHours(whStart.h, whStart.m, 0, 0);
-      const windowEnd   = new Date(ds); windowEnd.setHours(whEnd.h,   whEnd.m,   0, 0);
-
-      const wStart = windowStart < start ? start : windowStart;
-      const wEnd   = windowEnd   > end   ? end   : windowEnd;
-      if (wEnd <= wStart) { cursor = addDays(ds, 1); continue; }
-
-      let t = new Date(Math.ceil(wStart.getTime() / stepMS) * stepMS);
-      while (t.getTime() + durMS <= wEnd.getTime() && slots.length < limit) {
-        const slotEnd = new Date(t.getTime() + durMS);
-        let conflict = false;
-        for (const iv of merged) {
-          if (iv.end <= t) continue;
-          if (iv.start >= slotEnd) break;
-          conflict = true; break;
+      for (let t = new Date(dayStart); t < dayEnd; t = new Date(t.getTime() + stepMinutes * 60000)) {
+        const s = new Date(t.getTime() + bufferMinutesBefore * 60000);
+        const e = new Date(s.getTime() + durationMinutes * 60000 + bufferMinutesAfter * 60000);
+        if (e > dayEnd) break;
+        const overlaps = busy.some(b => (new Date(s) < new Date(b.end)) && (new Date(e) > new Date(b.start)));
+        if (!overlaps) {
+          slots.push({ startISO: s.toISOString(), endISO: e.toISOString() });
+          if (slots.length >= limit) break;
         }
-        if (!conflict) slots.push({ startISO: t.toISOString(), endISO: slotEnd.toISOString() });
-        t = new Date(t.getTime() + stepMS);
       }
-      cursor = addDays(ds, 1);
+      if (slots.length >= limit) break;
     }
 
-    return res.json({
-      timeMin: start.toISOString(), timeMax: end.toISOString(),
-      durationMinutes, workHours: { start: workHours.start || "08:00", end: workHours.end || "18:00", timeZone: TZloc },
-      includeWeekends, stepMinutes, limitRequested: limit, slots,
+    res.json({
+      timeMin: startBound.toISOString(),
+      timeMax: endBound.toISOString(),
+      durationMinutes,
+      workHours,
+      includeWeekends,
+      stepMinutes,
+      limitRequested: limit,
+      slots,
     });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/suggest error:", details);
-    return res.status(status).json({ error: "calendar_suggest_failed", status, details });
+    res.status(status).json({ error: 'calendar_suggest_failed', status, details: e?.response?.data || e?.message });
   }
 });
 
-// ── KALENDARZ: PUSH (webhooki) ─────────────────────────────────────
-const PUBLIC_URL = process.env.PUBLIC_URL || process.env.BASE_URL || "https://ai.aneuroasystent.pl";
-const WATCH_TOKEN = process.env.WATCH_TOKEN || process.env.SESSION_SECRET || "dev-token";
-
-let CAL_PUSH = { channelId: null, resourceId: null, expiration: null, syncToken: null, lastChanges: [], history: [] };
-// wczytaj stan z Redis
-(async () => { const saved = await kvGet(PUSH_KEY); if (saved) CAL_PUSH = { ...CAL_PUSH, ...saved }; })();
-
+// Watch helpers
 async function getFreshSyncToken(calendar) {
-  let pageToken; let nextSyncToken=null;
-  do {
-    const resp = await calendar.events.list({ calendarId: "primary", showDeleted: true, singleEvents: true, maxResults: 2500, pageToken });
-    pageToken = resp.data.nextPageToken || null;
-    nextSyncToken = resp.data.nextSyncToken || nextSyncToken;
-  } while (pageToken);
-  return nextSyncToken;
+  const resp = await calendar.events.list({
+    calendarId: 'primary',
+    singleEvents: true,
+    showDeleted: true,
+    maxResults: 1,
+  });
+  return resp.data.nextSyncToken || null;
 }
 
-app.post("/calendar/watch", async (_req, res) => {
+// Watch start
+app.post('/calendar/watch', async (_req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-
+    if (!ensureAuthOr401(res)) return;
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
     const channelId = crypto.randomUUID();
-    const address = `${PUBLIC_URL}/calendar/notifications`; // HTTPS publiczny
+    const address   = new URL('/calendar/notifications', BASE_URL).toString();
+
     const watchResp = await calendar.events.watch({
-      calendarId: "primary",
-      requestBody: { id: channelId, type: "web_hook", address, token: WATCH_TOKEN }
+      calendarId: 'primary',
+      requestBody: {
+        id: channelId,
+        type: 'web_hook',
+        address,
+        token: WATCH_TOKEN || undefined,
+      },
     });
 
-    CAL_PUSH.channelId = watchResp.data.id || channelId;
-    CAL_PUSH.resourceId = watchResp.data.resourceId || null;
-    CAL_PUSH.expiration = watchResp.data.expiration || null;
-    CAL_PUSH.syncToken = await getFreshSyncToken(calendar);
-    await kvSet(PUSH_KEY, CAL_PUSH);
-
-    return res.json({ ok: true, channelId: CAL_PUSH.channelId, resourceId: CAL_PUSH.resourceId, expiration: CAL_PUSH.expiration, syncToken: CAL_PUSH.syncToken, callback: address });
+    const state = {
+      channelId,
+      resourceId: watchResp.data.resourceId || null,
+      expiration: watchResp.data.expiration || null,
+      syncToken: await getFreshSyncToken(calendar),
+      history: [{
+        ts: new Date().toISOString(),
+        state: 'sync',
+        resId: watchResp.data.resourceId,
+        chanId: channelId,
+        token: WATCH_TOKEN,
+        msgNo: 1,
+        exp: watchResp.data.expiration ? new Date(Number(watchResp.data.expiration)).toUTCString() : null,
+        uri: 'events.list'
+      }],
+      lastChanges: [],
+    };
+    await kvSet(PUSH_KEY, state);
+    res.json({ ok: true, ...state, callback: address });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || e?.toString() || "unknown" };
-    console.error("calendar/watch error:", details);
-    return res.status(status).json({ error: "calendar_watch_failed", status, details });
+    res.status(status).json({ error: 'calendar_watch_failed', status, details: e?.response?.data || e?.message });
   }
 });
 
-app.post("/calendar/watch/stop", async (_req, res) => {
+// Watch stop
+app.post('/calendar/watch/stop', async (_req, res) => {
   try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    if (!CAL_PUSH.channelId || !CAL_PUSH.resourceId) return res.json({ ok: true, alreadyStopped: true });
-
-    oAuth2Client.setCredentials(userTokens);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-    await calendar.channels.stop({ requestBody: { id: CAL_PUSH.channelId, resourceId: CAL_PUSH.resourceId } });
-
-    CAL_PUSH.channelId = null; CAL_PUSH.resourceId = null; CAL_PUSH.expiration = null;
-    await kvSet(PUSH_KEY, CAL_PUSH);
-    return res.json({ ok: true });
+    if (!ensureAuthOr401(res)) return;
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    const state = (await kvGet(PUSH_KEY)) || {};
+    if (!state.channelId || !state.resourceId) {
+      return res.json({ ok: true, alreadyStopped: true });
+    }
+    await calendar.channels.stop({ requestBody: { id: state.channelId, resourceId: state.resourceId } });
+    await kvSet(PUSH_KEY, { channelId: null, resourceId: null, expiration: null, syncToken: state.syncToken || null, history: state.history || [], lastChanges: [] });
+    res.json({ ok: true });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("calendar/watch/stop error:", details);
-    return res.status(status).json({ error: "calendar_watch_stop_failed", status, details });
+    res.status(status).json({ error: 'calendar_watch_stop_failed', status, details: e?.response?.data || e?.message });
   }
 });
 
-app.get("/calendar/watch/state", async (_req, res) => {
-  return res.json({
-    channelId: CAL_PUSH.channelId, resourceId: CAL_PUSH.resourceId, expiration: CAL_PUSH.expiration,
-    hasSyncToken: Boolean(CAL_PUSH.syncToken), lastChangesCount: (CAL_PUSH.lastChanges || []).length,
-    history: CAL_PUSH.history.slice(-20)
+// Watch state
+app.get('/calendar/watch/state', async (_req, res) => {
+  const state = (await kvGet(PUSH_KEY)) || { channelId: null, resourceId: null, expiration: null, syncToken: null, lastChanges: [], history: [] };
+  res.json({
+    channelId: state.channelId,
+    resourceId: state.resourceId,
+    expiration: state.expiration,
+    hasSyncToken: Boolean(state.syncToken),
+    lastChangesCount: Array.isArray(state.lastChanges) ? state.lastChanges.length : 0,
+    history: state.history || [],
   });
 });
 
-app.post("/calendar/notifications", async (req, res) => {
+// Webhook receiver (does not require auth headers; we load tokens ourselves)
+app.post('/calendar/notifications', async (req, res) => {
   try {
     const hdr = {
-      state: req.get("X-Goog-Resource-State"),
-      resId: req.get("X-Goog-Resource-Id"),
-      chanId: req.get("X-Goog-Channel-Id"),
-      token: req.get("X-Goog-Channel-Token"),
-      msgNo: req.get("X-Goog-Message-Number"),
-      exp: req.get("X-Goog-Channel-Expiration"),
-      uri: req.get("X-Goog-Resource-URI")
+      state: req.get('X-Goog-Resource-State'),
+      resId: req.get('X-Goog-Resource-Id'),
+      chanId: req.get('X-Goog-Channel-Id'),
+      token: req.get('X-Goog-Channel-Token'),
+      msgNo: req.get('X-Goog-Message-Number'),
+      exp: req.get('X-Goog-Channel-Expiration'),
+      uri: req.get('X-Goog-Resource-URI'),
     };
-    CAL_PUSH.history.push({ ts: new Date().toISOString(), ...hdr });
-    if (CAL_PUSH.history.length > 200) CAL_PUSH.history = CAL_PUSH.history.slice(-200);
+    // Always reply 200 quickly
+    res.status(200).send('OK');
 
-    if (hdr.chanId && CAL_PUSH.channelId && hdr.chanId !== CAL_PUSH.channelId) return res.status(202).send("Different channel; ignoring");
-    if (WATCH_TOKEN && hdr.token && hdr.token !== WATCH_TOKEN) return res.status(403).send("Invalid channel token");
+    // Load current state & tokens
+    const state = (await kvGet(PUSH_KEY)) || {};
+    state.history = state.history || [];
+    state.lastChanges = [];
+    state.history.push({ ts: new Date().toISOString(), ...hdr });
+    await kvSet(PUSH_KEY, state);
 
-    res.status(200).send("OK"); // szybka odpowiedź
+    const storedTokens = userTokens || (await kvGet(TOKENS_KEY));
+    if (!storedTokens) return;
+    oAuth2Client.setCredentials(storedTokens);
 
-    if (!userTokens || !CAL_PUSH.syncToken) return;
-    oAuth2Client.setCredentials(userTokens);
-    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    if (WATCH_TOKEN && hdr.token && hdr.token !== WATCH_TOKEN) return;
 
-    let pageToken; const changes = [];
+    const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    if (!state.syncToken) {
+      state.syncToken = await getFreshSyncToken(calendar);
+      await kvSet(PUSH_KEY, state);
+      return;
+    }
+
+    let pageToken;
+    const changes = [];
     while (true) {
       try {
-        const resp = await calendar.events.list({ calendarId: "primary", syncToken: CAL_PUSH.syncToken, showDeleted: true, singleEvents: true, pageToken });
-        (resp.data.items || []).forEach(ev => {
-          changes.push({ id: ev.id, status: ev.status, summary: ev.summary, start: ev.start, end: ev.end, updated: ev.updated });
+        const resp = await calendar.events.list({
+          calendarId: 'primary',
+          syncToken: state.syncToken,
+          singleEvents: true,
+          showDeleted: true,
+          pageToken,
         });
-        if (resp.data.nextPageToken) pageToken = resp.data.nextPageToken;
-        else { CAL_PUSH.syncToken = resp.data.nextSyncToken || CAL_PUSH.syncToken; break; }
+        (resp.data.items || []).forEach(ev => {
+          changes.push({
+            id: ev.id,
+            status: ev.status,
+            summary: ev.summary,
+            start: ev.start,
+            end: ev.end,
+            updated: ev.updated,
+          });
+        });
+        if (resp.data.nextPageToken) {
+          pageToken = resp.data.nextPageToken;
+        } else {
+          state.syncToken = resp.data.nextSyncToken || state.syncToken;
+          break;
+        }
       } catch (err) {
-        if (err?.code === 410 || err?.response?.status === 410) { CAL_PUSH.syncToken = await getFreshSyncToken(calendar); break; }
-        console.error("notifications diff error:", err?.response?.data || err?.message || err); break;
+        if (err?.code === 410 || err?.response?.status === 410) {
+          state.syncToken = await getFreshSyncToken(calendar);
+          break;
+        }
+        break;
       }
     }
-    CAL_PUSH.lastChanges = changes;
-    await kvSet(PUSH_KEY, CAL_PUSH);
+    state.lastChanges = changes;
+    await kvSet(PUSH_KEY, state);
   } catch (e) {
-    console.error("notifications handler error:", e?.message || e);
+    // swallow errors: webhook must succeed
   }
 });
 
-// ── ROUTES: GMAIL ──────────────────────────────────────────────────
-app.get("/gmail/messages", async (req, res) => {
-  try {
-    const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
-    const q = req.query.q || ""; // newer_than:7d subject:faktura
-    const resp = await gmail.users.messages.list({ userId: "me", q, maxResults: 10 });
+// ==== Gmail ====
+function base64url(input) {
+  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function buildMime({ to, from, subject, text, html, attachments }) {
+  const boundary = 'jarvis_boundary_' + crypto.randomBytes(8).toString('hex');
+  const headers = [];
+  if (from) headers.push(`From: ${from}`);
+  if (to) headers.push(`To: ${to}`);
+  if (subject) headers.push(`Subject: ${subject}`);
+  headers.push('MIME-Version: 1.0');
+  let body = '';
 
-    const items = resp.data.messages || [];
-    const details = [];
-    for (const m of items) {
-      const msg = await gmail.users.messages.get({ userId: "me", id: m.id, format: "metadata", metadataHeaders: ["Subject", "From", "Date"] });
-      const headers = msg.data.payload?.headers || [];
-      const pick = (name) => headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || "";
-      details.push({ id: m.id, snippet: msg.data.snippet, subject: pick("Subject"), from: pick("From"), date: pick("Date") });
+  if (attachments && attachments.length) {
+    headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+    const altBoundary = boundary + '_alt';
+
+    body += `--${boundary}\r\n`;
+    body += `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n`;
+    if (text) {
+      body += `--${altBoundary}\r\n`;
+      body += `Content-Type: text/plain; charset="UTF-8"\r\n\r\n${text}\r\n`;
     }
-    res.json({ messages: details });
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Błąd przy pobieraniu Gmaila.");
-  }
-});
-
-app.post("/gmail/send", async (req, res) => {
-  const { to, subject, text, html, from, attachments = [] } = req.body || {};
-  if (!to || !subject) return res.status(400).json({ error: "Wymagane pola: to, subject" });
-  try {
-    const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
-    const raw = buildRawEmail({ to, subject, text, html, from, attachments });
-    const sendResp = await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
-    res.json({ id: sendResp.data.id, labelIds: sendResp.data.labelIds || [] });
-  } catch (e) {
-    console.error("Błąd wysyłki maila:", e?.response?.data || e);
-    res.status(500).send("Błąd wysyłania wiadomości");
-  }
-});
-
-app.post("/gmail/reply", async (req, res) => {
-  try {
-    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
-    oAuth2Client.setCredentials(userTokens);
-
-    const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
-    const { replyToMessageId, threadId: threadIdInput, to: toInput, subject: subjectInput, text, html, attachments = [], inReplyTo: inReplyToInput, references: referencesInput } = req.body || {};
-    if (!text && !html) return res.status(400).json({ error: "Wymagane: text lub html" });
-
-    let orig = null;
-    if (replyToMessageId) {
-      const m = await gmail.users.messages.get({ userId: "me", id: replyToMessageId, format: "metadata", metadataHeaders: ["Message-ID", "References", "Subject", "From", "Reply-To"] });
-      orig = { threadId: m.data.threadId, headers: (m.data.payload?.headers || []).reduce((acc, h) => { acc[h.name.toLowerCase()] = h.value; return acc; }, {}) };
+    if (html) {
+      body += `--${altBoundary}\r\n`;
+      body += `Content-Type: text/html; charset="UTF-8"\r\n\r\n${html}\r\n`;
     }
+    body += `--${altBoundary}--\r\n`;
 
-    let threadId = threadIdInput || orig?.threadId;
-    if (!threadId) return res.status(400).json({ error: "Brak threadId lub replyToMessageId" });
+    for (const a of attachments) {
+      if (!a?.filename || !a?.mimeType || !a?.data) continue;
+      body += `--${boundary}\r\n`;
+      body += `Content-Type: ${a.mimeType}; name="${a.filename}"\r\n`;
+      body += `Content-Disposition: attachment; filename="${a.filename}"\r\n`;
+      body += 'Content-Transfer-Encoding: base64\r\n\r\n';
+      body += `${a.data}\r\n`;
+    }
+    body += `--${boundary}--`;
+  } else if (html) {
+    headers.push('Content-Type: text/html; charset="UTF-8"');
+    body = html;
+  } else {
+    headers.push('Content-Type: text/plain; charset="UTF-8"');
+    body = text || '';
+  }
+  return headers.join('\r\n') + '\r\n\r\n' + body;
+}
 
-    const origMsgId = orig?.headers?.["message-id"];
-    const inReplyTo = inReplyToInput || origMsgId || null;
-    let references = referencesInput || null;
-    if (!references) { const prevRefs = (orig?.headers?.["references"] || "").trim(); references = [prevRefs, origMsgId].filter(Boolean).join(" ").trim() || null; }
-
-    let subject = subjectInput;
-    if (!subject) { const origSubj = orig?.headers?.["subject"] || ""; subject = /^Re:/i.test(origSubj) ? origSubj : `Re: ${origSubj}`; }
-
-    let to = toInput;
-    if (!to) to = orig?.headers?.["reply-to"] || orig?.headers?.["from"] || null;
-    if (!to) return res.status(400).json({ error: "Nie udało się ustalić odbiorcy (to). Podaj 'to' w body." });
-
-    const headersExtra = {};
-    if (inReplyTo) headersExtra["In-Reply-To"] = inReplyTo;
-    if (references) headersExtra["References"] = references;
-
-    const raw = buildRawEmail({ to, subject, text, html, attachments, headersExtra });
-    const sendResp = await gmail.users.messages.send({ userId: "me", requestBody: { raw, threadId } });
-    return res.json({ id: sendResp.data.id, threadId: sendResp.data.threadId || threadId, labelIds: sendResp.data.labelIds || [] });
+// List messages (simple)
+app.get('/gmail/messages', async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
+    const q = req.query.q || 'newer_than:7d';
+    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+    const list = await gmail.users.messages.list({ userId: 'me', q, maxResults: 10 });
+    const msgs = [];
+    for (const m of list.data.messages || []) {
+      const det = await gmail.users.messages.get({ userId: 'me', id: m.id, format: 'metadata', metadataHeaders: ['Subject', 'From', 'Date'] });
+      const headers = det.data.payload?.headers || [];
+      const getH = (n) => headers.find(h => h.name?.toLowerCase() === n.toLowerCase())?.value || '';
+      msgs.push({
+        id: det.data.id,
+        snippet: det.data.snippet || '',
+        subject: getH('Subject'),
+        from: getH('From'),
+        date: getH('Date'),
+      });
+    }
+    res.json({ messages: msgs });
   } catch (e) {
     const status = e?.response?.status || 500;
-    const details = e?.response?.data || { message: e?.message || "unknown" };
-    console.error("gmail/reply error:", details);
-    return res.status(status).json({ error: "gmail_reply_failed", status, details });
+    res.status(status).json({ error: 'gmail_list_failed', status, details: e?.response?.data || e?.message });
   }
 });
 
-// ── ROUTES: DRIVE ──────────────────────────────────────────────────
-app.get("/drive/search", async (req, res) => {
+// Send email
+app.post('/gmail/send', async (req, res) => {
   try {
-    const drive = google.drive({ version: "v3", auth: oAuth2Client });
-    const q = req.query.q || "";
-    const resp = await drive.files.list({ q: `name contains '${q.replace(/'/g, "\\'")}'`, pageSize: 10, fields: "files(id, name, mimeType, modifiedTime)" });
+    if (!ensureAuthOr401(res)) return;
+    const { to, from, subject, text, html, attachments } = req.body || {};
+    if (!to || !subject) return res.status(400).json({ error: 'missing_to_or_subject' });
+    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+    const mime = buildMime({ to, from, subject, text, html, attachments });
+    const raw = base64url(mime);
+    const send = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+    res.json({ id: send.data.id, labelIds: send.data.labelIds });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    res.status(status).json({ error: 'gmail_send_failed', status, details: e?.response?.data || e?.message });
+  }
+});
+
+// Reply in thread
+app.post('/gmail/reply', async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
+    const { replyToMessageId, threadId, to, subject, text, html, attachments, inReplyTo, references } = req.body || {};
+    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+
+    let useThreadId = threadId;
+    let headers = [];
+    if (replyToMessageId) {
+      const orig = await gmail.users.messages.get({ userId: 'me', id: replyToMessageId, format: 'metadata', metadataHeaders: ['Message-ID', 'In-Reply-To', 'References', 'From', 'To', 'Subject'] });
+      useThreadId = useThreadId || orig.data.threadId;
+      const hs = orig.data.payload?.headers || [];
+      const getH = (n) => hs.find(h => h.name?.toLowerCase() === n.toLowerCase())?.value || '';
+      if (!subject) headers.push(`Subject: Re: ${getH('Subject')}`);
+      headers.push(`In-Reply-To: ${inReplyTo || getH('Message-ID')}`);
+      const refs = [getH('References'), getH('Message-ID')].filter(Boolean).join(' ').trim();
+      if (refs) headers.push(`References: ${references || refs}`);
+      if (!to) headers.push(`To: ${getH('From')}`);
+    } else {
+      if (to) headers.push(`To: ${to}`);
+      if (subject) headers.push(`Subject: ${subject}`);
+    }
+
+    const boundary = 'jarvis_reply_' + crypto.randomBytes(8).toString('hex');
+    headers.push('MIME-Version: 1.0');
+    let body = '';
+
+    if (attachments && attachments.length) {
+      headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+      const altBoundary = boundary + '_alt';
+
+      body += `--${boundary}\r\n`;
+      body += `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n`;
+      if (text) {
+        body += `--${altBoundary}\r\n`;
+        body += `Content-Type: text/plain; charset="UTF-8"\r\n\r\n${text}\r\n`;
+      }
+      if (html) {
+        body += `--${altBoundary}\r\n`;
+        body += `Content-Type: text/html; charset="UTF-8"\r\n\r\n${html}\r\n`;
+      }
+      body += `--${altBoundary}--\r\n`;
+
+      for (const a of attachments) {
+        if (!a?.filename || !a?.mimeType || !a?.data) continue;
+        body += `--${boundary}\r\n`;
+        body += `Content-Type: ${a.mimeType}; name="${a.filename}"\r\n`;
+        body += `Content-Disposition: attachment; filename="${a.filename}"\r\n`;
+        body += 'Content-Transfer-Encoding: base64\r\n\r\n';
+        body += `${a.data}\r\n`;
+      }
+      body += `--${boundary}--`;
+    } else if (html) {
+      headers.push('Content-Type: text/html; charset="UTF-8"');
+      body = html;
+    } else {
+      headers.push('Content-Type: text/plain; charset="UTF-8"');
+      body = text || '';
+    }
+
+    const raw = base64url(headers.join('\r\n') + '\r\n\r\n' + body);
+    const send = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: { raw, threadId: useThreadId },
+    });
+    res.json({ id: send.data.id, threadId: send.data.threadId, labelIds: send.data.labelIds });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    res.status(status).json({ error: 'gmail_reply_failed', status, details: e?.response?.data || e?.message });
+  }
+});
+
+// ==== Drive ====
+app.get('/drive/search', async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
+    const q = req.query.q || '';
+    const drive = google.drive({ version: 'v3', auth: oAuth2Client });
+    const resp = await drive.files.list({
+      q: q ? `name contains '${q.replace(/'/g, "\\'")}'` : undefined,
+      fields: 'files(id,name,mimeType,modifiedTime)',
+      pageSize: 20,
+    });
     res.json(resp.data.files || []);
   } catch (e) {
-    console.error(e);
-    res.status(500).send("Błąd wyszukiwania Drive");
+    const status = e?.response?.status || 500;
+    res.status(status).json({ error: 'drive_search_failed', status, details: e?.response?.data || e?.message });
   }
 });
 
-// ── ROUTES: PLACES (Google Places API – NEW) ───────────────────────
-app.get("/places/search", async (req, res) => {
+// ==== Places (New) ====
+app.get('/places/search', async (req, res) => {
   try {
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "Brak GOOGLE_MAPS_API_KEY w zmiennych środowiskowych (.env)" });
+    const q = req.query.q || '';
+    const lat = parseFloat(req.query.lat || '52.2297');
+    const lng = parseFloat(req.query.lng || '21.0122');
+    const radius = parseInt(req.query.radius || '3000', 10);
 
-    const { q = "", lat = 52.2297, lng = 21.0122, radius = 3000 } = req.query;
-    const url = "https://places.googleapis.com/v1/places:searchText";
-    const fieldMask = [
-      "places.id","places.displayName","places.formattedAddress","places.location",
-      "places.rating","places.userRatingCount","places.types",
-      "places.currentOpeningHours.weekdayDescriptions","places.nationalPhoneNumber","places.websiteUri",
-    ].join(",");
+    if (!MAPS_KEY) return res.status(500).json({ error: 'missing_GOOGLE_MAPS_API_KEY' });
+
+    const url = 'https://places.googleapis.com/v1/places:searchText';
     const body = {
-      textQuery: String(q), languageCode: "pl",
-      locationBias: { circle: { center: { latitude: Number(lat), longitude: Number(lng) }, radius: Number(radius) } },
+      textQuery: q || 'kawiarnia',
+      locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius } },
+      maxResultCount: 10,
+      languageCode: 'pl',
     };
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": fieldMask },
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': MAPS_KEY,
+        'X-Goog-FieldMask': '*',
+      },
       body: JSON.stringify(body),
     });
-    const data = await resp.json();
-    if (!resp.ok) return res.status(502).json({ error: "Błąd Google Places (New)", status: resp.status, message: data?.error?.message || null });
+    const data = await r.json();
 
-    const results = (data.places || []).map((p) => ({
-      place_name: p.id || null, displayName: p.displayName?.text || null, address: p.formattedAddress || null,
-      rating: p.rating ?? null, user_ratings_total: p.userRatingCount ?? null, phone: p.nationalPhoneNumber || null, website: p.websiteUri || null,
-      open_weekdays: p.currentOpeningHours?.weekdayDescriptions || [],
-      location: { lat: p.location?.latitude ?? null, lng: p.location?.longitude ?? null }, types: p.types || [],
+    const results = (data.places || []).map(p => ({
+      place_name: p.name,
+      displayName: p.displayName?.text,
+      address: p.formattedAddress,
+      rating: p.rating,
+      user_ratings_total: p.userRatingCount,
+      phone: p.nationalPhoneNumber || null,
+      website: p.websiteUri || null,
+      open_weekdays: p.regularOpeningHours?.weekdayDescriptions || [],
+      location: { lat: p.location?.latitude || null, lng: p.location?.longitude || null },
+      types: p.types || [],
     }));
-    res.json({ query: q, lat: Number(lat), lng: Number(lng), radius: Number(radius), results });
+
+    res.json({ query: q, lat, lng, radius, results });
   } catch (e) {
-    console.error("Places NEW search error:", e);
-    res.status(500).json({ error: "Błąd wyszukiwania miejsc (New API)" });
+    const status = e?.response?.status || 500;
+    res.status(status).json({ error: 'places_search_failed', status, details: e?.response?.data || e?.message });
   }
 });
 
-app.get("/places/details", async (req, res) => {
+app.get('/places/details', async (req, res) => {
   try {
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    let { place_id } = req.query; // w New API: "places/XXXX"
-    if (!apiKey) return res.status(500).json({ error: "Brak GOOGLE_MAPS_API_KEY" });
-    if (!place_id) return res.status(400).json({ error: "Brak parametru place_id" });
-    if (!String(place_id).startsWith("places/")) place_id = `places/${place_id}`;
-
-    const fieldMask = [
-      "id","displayName","formattedAddress","location","rating","userRatingCount",
-      "currentOpeningHours.weekdayDescriptions","nationalPhoneNumber","internationalPhoneNumber","websiteUri","types",
-    ].join(",");
-    const url = `https://places.googleapis.com/v1/${encodeURIComponent(place_id)}?languageCode=pl&fields=${encodeURIComponent(fieldMask)}`;
-    const resp = await fetch(url, { headers: { "X-Goog-Api-Key": apiKey } });
-    const data = await resp.json();
-    if (!resp.ok) return res.status(502).json({ error: "Błąd Google Places Details (New)", status: resp.status, message: data?.error?.message || null });
-
-    const p = data || {};
-    const details = {
-      place_name: p.id || null, name: p.displayName?.text || null, address: p.formattedAddress || null,
-      phone: p.nationalPhoneNumber || p.internationalPhoneNumber || null, website: p.websiteUri || null,
-      rating: p.rating ?? null, user_ratings_total: p.userRatingCount ?? null,
-      open_weekdays: p.currentOpeningHours?.weekdayDescriptions || [],
-      location: { lat: p.location?.latitude ?? null, lng: p.location?.longitude ?? null }, types: p.types || [],
+    const place_id = req.query.place_id;
+    if (!MAPS_KEY) return res.status(500).json({ error: 'missing_GOOGLE_MAPS_API_KEY' });
+    if (!place_id) return res.status(400).json({ error: 'missing_place_id' });
+    const url = `https://places.googleapis.com/v1/${encodeURIComponent(place_id)}`;
+    const r = await fetch(url, {
+      headers: {
+        'X-Goog-Api-Key': MAPS_KEY,
+        'X-Goog-FieldMask': '*',
+      },
+    });
+    const p = await r.json();
+    const out = {
+      place_name: p.name,
+      name: p.displayName?.text,
+      address: p.formattedAddress,
+      phone: p.nationalPhoneNumber || null,
+      website: p.websiteUri || null,
+      rating: p.rating || null,
+      user_ratings_total: p.userRatingCount || null,
+      open_weekdays: p.regularOpeningHours?.weekdayDescriptions || [],
+      location: { lat: p.location?.latitude || null, lng: p.location?.longitude || null },
+      types: p.types || [],
     };
-    res.json(details);
+    res.json(out);
   } catch (e) {
-    console.error("Places NEW details error:", e);
-    res.status(500).json({ error: "Błąd pobierania szczegółów miejsca (New API)" });
+    const status = e?.response?.status || 500;
+    res.status(status).json({ error: 'places_details_failed', status, details: e?.response?.data || e?.message });
   }
 });
 
-// ── START ──────────────────────────────────────────────────────────
-const server = app.listen(PORT, () => {
-  console.log(`✅ Serwer nasłuchuje na http://localhost:${PORT}`);
-  console.log("DEBUG REDIRECT_URI =", (process.env.GOOGLE_REDIRECT_URI || "").trim());
-  console.log("MAPS KEY set?:", Boolean(process.env.GOOGLE_MAPS_API_KEY));
+// --- Swagger UI wiring (optional; won't crash if spec missing) ---
+try {
+  const specPath = path.join(__dirname, 'openapi-public.yaml');
+  let openapiText = fs.readFileSync(specPath, 'utf8').replace(/^\uFEFF/, '');
+  const openapiDoc = YAML.parse(openapiText);
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiDoc));
+  app.get('/openapi-public.yaml', (_req, res) => res.type('text/yaml').send(openapiText));
+  console.log('Swagger UI: /docs  (spec: /openapi-public.yaml)');
+} catch (e) {
+  console.error('Swagger init failed:', e?.message || e);
+  app.get('/docs', (_req, res) => res.status(500).send('Swagger failed to load spec. Spec: /openapi-public.yaml'));
+}
+
+// Start server
+app.listen(PORT, () => {
+  if (BASE_URL.includes('localhost')) {
+    console.log(`Serwer działa na http://localhost:${PORT}`);
+  }
 });
-server.on("error", (err) => console.error("❌ Błąd przy app.listen:", err));
