@@ -58,13 +58,14 @@ app.get("/debug/routes", (_req, res) => {
 });
 
 // ── GOOGLE OAUTH2 ──────────────────────────────────────────────────
-// Uwaga: mamy uprawnienia do: Kalendarz (read), Gmail (read + send), Drive (metadata read)
+// --- SCOPES: pełny dostęp do Kalendarza + Gmail (wysyłka/odczyt) + Drive readonly ---
 const SCOPES = [
-  "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
-  "https://www.googleapis.com/auth/drive.metadata.readonly",
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/calendar" // <-- pełny R/W do kalendarza (zamiast calendar.readonly)
 ];
+
 
 const oAuth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
