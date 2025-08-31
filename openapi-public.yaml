@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Jarvis-PL API (Public for GPT Actions)
-  version: "1.2.0"
+  version: "1.3.1"
 
 servers:
   - url: https://ai.aneuroasystent.pl
@@ -16,7 +16,9 @@ paths:
           description: OK
           content:
             text/plain:
-              schema: { type: string, example: OK }
+              schema:
+                type: string
+                example: OK
 
   /health:
     get:
@@ -30,7 +32,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  ok: { type: boolean, example: true }
+                  ok:
+                    type: boolean
+                    example: true
 
   # ==================== KALENDARZ ====================
 
@@ -48,12 +52,14 @@ paths:
                 properties:
                   events:
                     type: array
-                    items: { $ref: "#/components/schemas/CalendarEventListItem" }
+                    items:
+                      $ref: "#/components/schemas/CalendarEventListItem"
         "401":
           description: Brak autoryzacji
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /calendar/event:
     get:
@@ -63,7 +69,8 @@ paths:
         - in: query
           name: id
           required: true
-          schema: { type: string }
+          schema:
+            type: string
           description: ID wydarzenia z Google Calendar
       responses:
         "200":
@@ -77,7 +84,8 @@ paths:
           description: Nie znaleziono wydarzenia
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /calendar/today:
     get:
@@ -93,12 +101,14 @@ paths:
                 properties:
                   today:
                     type: array
-                    items: { type: string }
+                    items:
+                      type: string
         "401":
           description: Brak autoryzacji
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /calendar/tomorrow:
     get:
@@ -114,54 +124,62 @@ paths:
                 properties:
                   tomorrow:
                     type: array
-                    items: { type: string }
+                    items:
+                      type: string
         "401":
           description: Brak autoryzacji
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /calendar/create:
     post:
       operationId: createCalendarEvent
-      summary: Tworzy wydarzenie w kalendarzu (primary) — opcjonalnie z Google Meet
+      summary: Tworzy wydarzenie w kalendarzu (primary) — opcjonalnie z Google Meet (createMeet) i RRULE (recurrence)
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreateEventRequest" }
+            schema:
+              $ref: "#/components/schemas/CreateEventRequest"
       responses:
         "200":
           description: Utworzone
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/CreateEventResponse" }
+              schema:
+                $ref: "#/components/schemas/CreateEventResponse"
         "401":
           description: Brak autoryzacji
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /calendar/update:
     post:
       operationId: updateCalendarEvent
-      summary: Aktualizuje (partial PATCH) wydarzenie — można dołożyć Google Meet
+      summary: Aktualizuje (partial PATCH) wydarzenie — obsługa Google Meet i RRULE
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/UpdateEventRequest" }
+            schema:
+              $ref: "#/components/schemas/UpdateEventRequest"
       responses:
         "200":
           description: Zaktualizowane
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/UpdateEventResponse" }
+              schema:
+                $ref: "#/components/schemas/UpdateEventResponse"
         "4XX":
           description: Błąd walidacji / uprawnień
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /calendar/delete:
     post:
@@ -171,18 +189,21 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/DeleteEventRequest" }
+            schema:
+              $ref: "#/components/schemas/DeleteEventRequest"
       responses:
         "200":
           description: Usunięte
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/DeleteEventResponse" }
+              schema:
+                $ref: "#/components/schemas/DeleteEventResponse"
         "4XX":
           description: Błąd walidacji / uprawnień
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /calendar/quickadd:
     post:
@@ -192,18 +213,87 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/QuickAddRequest" }
+            schema:
+              $ref: "#/components/schemas/QuickAddRequest"
       responses:
         "200":
           description: Utworzone (QuickAdd)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuickAddResponse" }
+              schema:
+                $ref: "#/components/schemas/QuickAddResponse"
         "4XX":
           description: Błąd walidacji / uprawnień
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /calendar/instances:
+    get:
+      operationId: listCalendarInstances
+      summary: Zwraca instancje (wystąpienia) serii wydarzenia
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID serii (recurring eventId)
+        - in: query
+          name: timeMin
+          schema:
+            type: string
+            format: date-time
+          description: ISO 8601 (domyślnie dziś 00:00:00Z)
+        - in: query
+          name: timeMax
+          schema:
+            type: string
+            format: date-time
+          description: ISO 8601 (domyślnie +30 dni)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  seriesId:
+                    type: string
+                  timeMin:
+                    type: string
+                  timeMax:
+                    type: string
+                  instances:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          description: ID konkretnej instancji (z sufiksem daty)
+                        recurringEventId:
+                          type: string
+                        summary:
+                          type: string
+                        status:
+                          type: string
+                        start:
+                          type: object
+                          additionalProperties: true
+                        end:
+                          type: object
+                          additionalProperties: true
+                        htmlLink:
+                          type: string
+        "4XX":
+          description: Błąd walidacji / uprawnień
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # ==================== GMAIL ====================
 
@@ -214,7 +304,8 @@ paths:
       parameters:
         - in: query
           name: q
-          schema: { type: string }
+          schema:
+            type: string
           description: Zapytanie Gmail, np. newer_than:7d subject:"faktura" from:adres@domena
       responses:
         "200":
@@ -226,7 +317,8 @@ paths:
                 properties:
                   messages:
                     type: array
-                    items: { $ref: "#/components/schemas/GmailMessageSummary" }
+                    items:
+                      $ref: "#/components/schemas/GmailMessageSummary"
 
   /gmail/send:
     post:
@@ -236,23 +328,27 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/SendMailRequest" }
+            schema:
+              $ref: "#/components/schemas/SendMailRequest"
       responses:
         "200":
           description: Wysłano
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SendMailResponse" }
+              schema:
+                $ref: "#/components/schemas/SendMailResponse"
         "4XX":
           description: Błąd walidacji / Gmail
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "5XX":
           description: Błąd serwera / Gmail
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /gmail/reply:
     post:
@@ -262,23 +358,27 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ReplyMailRequest" }
+            schema:
+              $ref: "#/components/schemas/ReplyMailRequest"
       responses:
         "200":
           description: Wysłano odpowiedź
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ReplyMailResponse" }
+              schema:
+                $ref: "#/components/schemas/ReplyMailResponse"
         "4XX":
           description: Błąd walidacji / Gmail
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "5XX":
           description: Błąd serwera / Gmail
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # ==================== DRIVE & PLACES ====================
 
@@ -289,7 +389,8 @@ paths:
       parameters:
         - in: query
           name: q
-          schema: { type: string }
+          schema:
+            type: string
           description: Fraza do wyszukania w nazwie pliku
       responses:
         "200":
@@ -298,7 +399,8 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/DriveFile" }
+                items:
+                  $ref: "#/components/schemas/DriveFile"
 
   /places/search:
     get:
@@ -307,31 +409,37 @@ paths:
       parameters:
         - in: query
           name: q
-          schema: { type: string }
+          schema:
+            type: string
           description: Fraza, np. "kawiarnia", "pizza", "siłownia"
         - in: query
           name: lat
-          schema: { type: number }
+          schema:
+            type: number
           description: Szerokość geograficzna (domyślnie 52.2297)
         - in: query
           name: lng
-          schema: { type: number }
+          schema:
+            type: number
           description: Długość geograficzna (domyślnie 21.0122)
         - in: query
           name: radius
-          schema: { type: integer }
+          schema:
+            type: integer
           description: Promień w metrach (domyślnie 3000)
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/PlacesSearchResponse" }
+              schema:
+                $ref: "#/components/schemas/PlacesSearchResponse"
         "502":
           description: Błąd z Places API (New)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /places/details:
     get:
@@ -341,31 +449,36 @@ paths:
         - in: query
           name: place_id
           required: true
-          schema: { type: string }
+          schema:
+            type: string
           description: Resource name (np. "places/ChIJ…"). Jeśli podasz stare ID, backend doda prefiks "places/".
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/PlacesDetailsResponse" }
+              schema:
+                $ref: "#/components/schemas/PlacesDetailsResponse"
         "400":
           description: Brak place_id
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Błąd z Places API (New)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
     ErrorResponse:
       type: object
       properties:
-        error: { type: string }
+        error:
+          type: string
         details:
           description: Dodatkowe szczegóły błędu
           nullable: true
@@ -374,8 +487,10 @@ components:
     CalendarEventListItem:
       type: object
       properties:
-        id: { type: string }
-        summary: { type: string }
+        id:
+          type: string
+        summary:
+          type: string
         start:
           type: string
           nullable: true
@@ -385,19 +500,38 @@ components:
       type: object
       required: [summary, startISO, endISO]
       properties:
-        summary: { type: string }
-        description: { type: string, nullable: true }
-        location: { type: string, nullable: true }
-        startISO: { type: string, description: ISO 8601 lub YYYY-MM-DD (całodniowe) }
-        endISO: { type: string, description: ISO 8601 lub YYYY-MM-DD (całodniowe) }
-        timeZone: { type: string, default: Europe/Warsaw }
+        summary:
+          type: string
+        description:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        startISO:
+          type: string
+          description: ISO 8601 lub YYYY-MM-DD (całodniowe)
+        endISO:
+          type: string
+          description: ISO 8601 lub YYYY-MM-DD (całodniowe)
+        timeZone:
+          type: string
+          default: Europe/Warsaw
         attendeesEmails:
           type: array
-          items: { type: string, format: email }
+          items:
+            type: string
+            format: email
         remindersMinutes:
           type: integer
           minimum: 0
           description: Minuty przed wydarzeniem (popup)
+        recurrence:
+          type: array
+          items:
+            type: string
+            example: "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=10"
+          description: Lista reguł (RRULE/EXDATE/RDATE). Pusta tablica = brak cyklu.
         createMeet:
           type: boolean
           default: false
@@ -411,16 +545,20 @@ components:
     CreateEventResponse:
       type: object
       properties:
-        id: { type: string }
-        htmlLink: { type: string }
-        status: { type: string }
+        id:
+          type: string
+        htmlLink:
+          type: string
+        status:
+          type: string
         start:
           type: object
           additionalProperties: true
         end:
           type: object
           additionalProperties: true
-        summary: { type: string }
+        summary:
+          type: string
         hangoutLink:
           type: string
           nullable: true
@@ -435,19 +573,39 @@ components:
       type: object
       required: [id]
       properties:
-        id: { type: string }
-        summary: { type: string, nullable: true }
-        description: { type: string, nullable: true }
-        location: { type: string, nullable: true }
-        startISO: { type: string, nullable: true }
-        endISO: { type: string, nullable: true }
-        timeZone: { type: string, default: Europe/Warsaw }
+        id:
+          type: string
+        summary:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        startISO:
+          type: string
+          nullable: true
+        endISO:
+          type: string
+          nullable: true
+        timeZone:
+          type: string
+          default: Europe/Warsaw
         attendeesEmails:
           type: array
-          items: { type: string, format: email }
+          items:
+            type: string
+            format: email
         remindersMinutes:
           type: integer
           minimum: 0
+        recurrence:
+          type: array
+          items:
+            type: string
+          description: Ustawia/zmienia cykl. Pusta tablica [] usuwa cykliczność.
         createMeet:
           type: boolean
           default: false
@@ -460,17 +618,22 @@ components:
     UpdateEventResponse:
       type: object
       properties:
-        id: { type: string }
-        htmlLink: { type: string }
-        status: { type: string }
+        id:
+          type: string
+        htmlLink:
+          type: string
+        status:
+          type: string
         start:
           type: object
           additionalProperties: true
         end:
           type: object
           additionalProperties: true
-        summary: { type: string }
-        updated: { type: string }
+        summary:
+          type: string
+        updated:
+          type: string
         hangoutLink:
           type: string
           nullable: true
@@ -485,7 +648,8 @@ components:
       type: object
       required: [id]
       properties:
-        id: { type: string }
+        id:
+          type: string
         sendUpdates:
           type: string
           enum: [all, externalOnly, none]
@@ -494,14 +658,18 @@ components:
     DeleteEventResponse:
       type: object
       properties:
-        ok: { type: boolean, example: true }
-        deletedId: { type: string }
+        ok:
+          type: boolean
+          example: true
+        deletedId:
+          type: string
 
     QuickAddRequest:
       type: object
       required: [text]
       properties:
-        text: { type: string }
+        text:
+          type: string
         sendUpdates:
           type: string
           enum: [all, externalOnly, none]
@@ -510,33 +678,45 @@ components:
     QuickAddResponse:
       type: object
       properties:
-        id: { type: string }
-        htmlLink: { type: string }
-        status: { type: string }
+        id:
+          type: string
+        htmlLink:
+          type: string
+        status:
+          type: string
         start:
           type: object
           additionalProperties: true
         end:
           type: object
           additionalProperties: true
-        summary: { type: string }
+        summary:
+          type: string
 
     # ---- Gmail / Drive / Places ----
     GmailMessageSummary:
       type: object
       properties:
-        id: { type: string }
-        snippet: { type: string }
-        subject: { type: string }
-        from: { type: string }
-        date: { type: string }
+        id:
+          type: string
+        snippet:
+          type: string
+        subject:
+          type: string
+        from:
+          type: string
+        date:
+          type: string
 
     GmailAttachment:
       type: object
       required: [filename, mimeType, data]
       properties:
-        filename: { type: string }
-        mimeType: { type: string, example: application/pdf }
+        filename:
+          type: string
+        mimeType:
+          type: string
+          example: application/pdf
         data:
           type: string
           description: Czysta Base64 (bez prefiksu data:)
@@ -546,22 +726,34 @@ components:
       type: object
       required: [to, subject]
       properties:
-        to: { type: string, description: Adres odbiorcy (lub lista rozdzielona przecinkami) }
-        subject: { type: string }
-        text: { type: string, nullable: true }
-        html: { type: string, nullable: true }
-        from: { type: string, nullable: true }
+        to:
+          type: string
+          description: Adres odbiorcy (lub lista rozdzielona przecinkami)
+        subject:
+          type: string
+        text:
+          type: string
+          nullable: true
+        html:
+          type: string
+          nullable: true
+        from:
+          type: string
+          nullable: true
         attachments:
           type: array
-          items: { $ref: "#/components/schemas/GmailAttachment" }
+          items:
+            $ref: "#/components/schemas/GmailAttachment"
 
     SendMailResponse:
       type: object
       properties:
-        id: { type: string }
+        id:
+          type: string
         labelIds:
           type: array
-          items: { type: string }
+          items:
+            type: string
 
     ReplyMailRequest:
       type: object
@@ -580,8 +772,12 @@ components:
           type: string
           nullable: true
           description: Domyślnie "Re: {Subject oryginału}"
-        text: { type: string, nullable: true }
-        html: { type: string, nullable: true }
+        text:
+          type: string
+          nullable: true
+        html:
+          type: string
+          nullable: true
         inReplyTo:
           type: string
           nullable: true
@@ -590,7 +786,8 @@ components:
           nullable: true
         attachments:
           type: array
-          items: { $ref: "#/components/schemas/GmailAttachment" }
+          items:
+            $ref: "#/components/schemas/GmailAttachment"
       oneOf:
         - required: [replyToMessageId]
         - required: [threadId]
@@ -598,71 +795,122 @@ components:
     ReplyMailResponse:
       type: object
       properties:
-        id: { type: string }
-        threadId: { type: string }
+        id:
+          type: string
+        threadId:
+          type: string
         labelIds:
           type: array
-          items: { type: string }
+          items:
+            type: string
 
     DriveFile:
       type: object
       properties:
-        id: { type: string }
-        name: { type: string }
-        mimeType: { type: string }
-        modifiedTime: { type: string }
+        id:
+          type: string
+        name:
+          type: string
+        mimeType:
+          type: string
+        modifiedTime:
+          type: string
 
     PlacesSearchResult:
       type: object
       properties:
-        place_name: { type: string, description: Resource name (np. "places/ChIJ...") }
-        displayName: { type: string, nullable: true }
-        address: { type: string, nullable: true }
-        rating: { type: number, nullable: true }
-        user_ratings_total: { type: integer, nullable: true }
-        phone: { type: string, nullable: true }
-        website: { type: string, nullable: true }
+        place_name:
+          type: string
+          description: Resource name (np. "places/ChIJ...")
+        displayName:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        rating:
+          type: number
+          nullable: true
+        user_ratings_total:
+          type: integer
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
         open_weekdays:
           type: array
-          items: { type: string }
+          items:
+            type: string
         location:
           type: object
           properties:
-            lat: { type: number, nullable: true }
-            lng: { type: number, nullable: true }
+            lat:
+              type: number
+              nullable: true
+            lng:
+              type: number
+              nullable: true
         types:
           type: array
-          items: { type: string }
+          items:
+            type: string
 
     PlacesSearchResponse:
       type: object
       properties:
-        query: { type: string }
-        lat: { type: number }
-        lng: { type: number }
-        radius: { type: integer }
+        query:
+          type: string
+        lat:
+          type: number
+        lng:
+          type: number
+        radius:
+          type: integer
         results:
           type: array
-          items: { $ref: "#/components/schemas/PlacesSearchResult" }
+          items:
+            $ref: "#/components/schemas/PlacesSearchResult"
 
     PlacesDetailsResponse:
       type: object
       properties:
-        place_name: { type: string }
-        name: { type: string, nullable: true }
-        address: { type: string, nullable: true }
-        phone: { type: string, nullable: true }
-        website: { type: string, nullable: true }
-        rating: { type: number, nullable: true }
-        user_ratings_total: { type: integer, nullable: true }
+        place_name:
+          type: string
+        name:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        rating:
+          type: number
+          nullable: true
+        user_ratings_total:
+          type: integer
+          nullable: true
         open_weekdays:
           type: array
-          items: { type: string }
+          items:
+            type: string
         location:
           type: object
           properties:
-            lat: { type: number, nullable: true }
-            lng: { type: number, nullable: true }
+            lat:
+              type: number
+              nullable: true
+            lng:
+              type: number
+              nullable: true
         types:
           type: array
-          items: { type: string }
+          items:
+            type: string

@@ -446,8 +446,8 @@ app.get("/calendar/tomorrow", async (_req, res) => {
 
 // Tworzenie wydarzenia: POST /calendar/create
 // Body JSON: { summary, startISO, endISO, timeZone? }
-// Tworzenie wydarzenia: POST /calendar/create (z opcją Google Meet)// Pomocniczo: budowa pól start/end (obsługa all-day vs dateTime)
-// Wklej ten blok nad wszystkimi endpointami kalendarza:
+// Tworzenie wydarzenia: POST /calendar/create (z opcją Google Meet)
+// Pomocniczo: budowa pól start/end (obsługa all-day vs dateTime)
 function makeStartEnd({ startISO, endISO, timeZone = "Europe/Warsaw" }) {
   const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -466,6 +466,7 @@ function makeStartEnd({ startISO, endISO, timeZone = "Europe/Warsaw" }) {
   return { start, end };
 }
 
+// Tworzenie wydarzenia: POST /calendar/create (z opcją Google Meet + RRULE)
 app.post("/calendar/create", async (req, res) => {
   try {
     if (!userTokens) {
@@ -482,7 +483,7 @@ app.post("/calendar/create", async (req, res) => {
       timeZone = "Europe/Warsaw",
       attendeesEmails = [],
       remindersMinutes,
-      // NOWOŚĆ:
+      recurrence = [],
       createMeet = false,
       sendUpdates = "none",
     } = req.body || {};
@@ -514,8 +515,10 @@ app.post("/calendar/create", async (req, res) => {
       };
     }
 
-    // --- NOWOŚĆ: Google Meet ---
-    // Jeśli chcemy dodać od razu link do Meet:
+    if (Array.isArray(recurrence) && recurrence.length > 0) {
+      event.recurrence = recurrence;
+    }
+
     let conferenceDataVersionOpt = {};
     if (createMeet === true) {
       event.conferenceData = {
@@ -524,7 +527,6 @@ app.post("/calendar/create", async (req, res) => {
           conferenceSolutionKey: { type: "hangoutsMeet" },
         },
       };
-      // UWAGA: to pole MUSI być przekazane do insert/patch na „poziomie wywołania”, nie w requestBody
       conferenceDataVersionOpt = { conferenceDataVersion: 1 };
     }
 
@@ -543,7 +545,6 @@ app.post("/calendar/create", async (req, res) => {
       start: resp.data.start,
       end: resp.data.end,
       summary: resp.data.summary,
-      // Przydatne pola dot. Meet:
       hangoutLink: resp.data.hangoutLink || null,
       conferenceData: resp.data.conferenceData || null,
     });
@@ -554,29 +555,15 @@ app.post("/calendar/create", async (req, res) => {
     return res.status(status).json({ error: "calendar_create_failed", status, details });
   }
 });
-
-
 /**
  * Aktualizacja (partial, PATCH) wydarzenia w kalendarzu
  * POST /calendar/update
- * Body JSON: {
+ * Body JSON:
  *   id: string (wymagane),
- *   summary?, description?, location?,
- *   startISO?, endISO?, timeZone?,
- *   attendeesEmails?: string[],         // ["a@b.pl","c@d.pl"]
- *   remindersMinutes?: number,          // np. 10 (popup)
- *   sendUpdates?: "all"|"externalOnly"|"none" (domyślnie "none")
- * }
- */
-/**
- * Aktualizacja (partial, PATCH) wydarzenia w kalendarzu
- * POST /calendar/update
- * Body JSON: {
- *   id: string (wymagane),
- *   ...jak wcześniej...,
- *   createMeet?: boolean,           // NOWOŚĆ: true = dołóż link Meet
+ *   ...,
+ *   recurrence?: string[],        // [] wyczyści cykl
+ *   createMeet?: boolean,
  *   sendUpdates?: "all"|"externalOnly"|"none"
- * }
  */
 app.post("/calendar/update", async (req, res) => {
   try {
@@ -595,7 +582,7 @@ app.post("/calendar/update", async (req, res) => {
       timeZone = "Europe/Warsaw",
       attendeesEmails = [],
       remindersMinutes,
-      // NOWOŚĆ:
+      recurrence,
       createMeet = undefined,
       sendUpdates = "none",
     } = req.body || {};
@@ -628,7 +615,11 @@ app.post("/calendar/update", async (req, res) => {
       };
     }
 
-    // --- NOWOŚĆ: dołożenie Google Meet przy update ---
+    if (recurrence !== undefined) {
+      if (Array.isArray(recurrence)) body.recurrence = recurrence;
+      else return res.status(400).json({ error: "recurrence musi być tablicą stringów" });
+    }
+
     let confOpt = {};
     if (createMeet === true) {
       body.conferenceData = {
@@ -667,15 +658,6 @@ app.post("/calendar/update", async (req, res) => {
     return res.status(status).json({ error: "calendar_update_failed", status, details });
   }
 });
-
-/**
- * Usuwanie wydarzenia
- * POST /calendar/delete
- * Body JSON: { id: string (wymagane), sendUpdates?: "all"|"externalOnly"|"none" }
- *
- * Uwaga: dla wydarzeń cyklicznych możesz przekazać ID instancji
- * w postaci "SERIES_ID_YYYYMMDDTHHMMSSZ", aby skasować TYLKO tę instancję.
- */
 app.post("/calendar/delete", async (req, res) => {
   try {
     if (!userTokens) {
@@ -1108,4 +1090,52 @@ const server = app.listen(PORT, () => {
 });
 server.on("error", (err) => {
   console.error("❌ Błąd przy app.listen:", err);
+});
+
+
+/**
+ * Lista instancji (wystąpień) dla wydarzenia cyklicznego
+ * GET /calendar/instances?id=SERIES_ID&timeMin=...&timeMax=...
+ */
+app.get("/calendar/instances", async (req, res) => {
+  try {
+    if (!userTokens) {
+      return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    }
+    oAuth2Client.setCredentials(userTokens);
+
+    const { id, timeMin, timeMax } = req.query || {};
+    if (!id) return res.status(400).json({ error: "Wymagane pole query: id (SERIES_ID)" });
+
+    const now = new Date();
+    const startDef = timeMin || new Date(now.setHours(0,0,0,0)).toISOString();
+    const endDef = timeMax || new Date(Date.now() + 30*24*3600*1000).toISOString();
+
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    const resp = await calendar.events.instances({
+      calendarId: "primary",
+      eventId: id,
+      timeMin: startDef,
+      timeMax: endDef,
+      showDeleted: true,
+      maxResults: 2500,
+    });
+
+    const items = (resp.data.items || []).map(ev => ({
+      id: ev.id,
+      recurringEventId: ev.recurringEventId,
+      summary: ev.summary,
+      status: ev.status,
+      start: ev.start,
+      end: ev.end,
+      htmlLink: ev.htmlLink,
+    }));
+
+    return res.json({ seriesId: id, timeMin: startDef, timeMax: endDef, instances: items });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/instances error:", details);
+    return res.status(status).json({ error: "calendar_instances_failed", status, details });
+  }
 });
