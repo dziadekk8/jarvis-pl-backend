@@ -6,6 +6,8 @@ import { fileURLToPath } from "url";
 import { google } from "googleapis";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";
+import swaggerUi from "swagger-ui-express";
+
 
 dotenv.config();
 
@@ -44,6 +46,19 @@ app.get("/openapi-public.yaml", (_req, res) => {
   res.type("text/yaml; charset=utf-8");
   res.sendFile(path.join(__dirname, "openapi-public.yaml"));
 });
+
+// Swagger UI – interaktywna dokumentacja pod /docs
+import swaggerUi from "swagger-ui-express";
+app.use(
+  "/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(null, {
+    swaggerOptions: { url: "/openapi-public.yaml" }, // wskazanie na plik YAML
+    customSiteTitle: "Jarvis-PL API Docs",
+    customCss: ".swagger-ui .topbar { display:none }"
+  })
+);
+
 app.get("/openapi.yaml", (_req, res) => {
   res.type("text/yaml; charset=utf-8");
   res.sendFile(path.join(__dirname, "openapi.yaml"));
