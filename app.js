@@ -33,6 +33,12 @@ app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 app.get("/", (_req, res) => res.send("OK"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// Serwowanie PUBLICZNEJ specyfikacji OpenAPI (tylko bezpieczne endpointy)
+app.get("/openapi-public.yaml", (_req, res) => {
+  res.type("text/yaml; charset=utf-8");
+  res.sendFile(path.join(__dirname, "openapi-public.yaml"));
+});
+
 // Serwowanie specyfikacji OpenAPI (plik obok app.js)
 app.get("/openapi.yaml", (_req, res) => {
   res.type("text/yaml; charset=utf-8");
