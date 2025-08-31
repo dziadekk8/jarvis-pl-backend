@@ -506,6 +506,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /calendar/watch:
+    post:
+      operationId: calendarWatchStart
+      summary: Rejestruje webhook (push) dla zmian w kalendarzu
+      responses:
+        "200":
+          description: OK
+
+  /calendar/watch/stop:
+    post:
+      operationId: calendarWatchStop
+      summary: Wyrejestrowuje webhook (push)
+      responses:
+        "200":
+          description: OK
+
+  /calendar/watch/state:
+    get:
+      operationId: calendarWatchState
+      summary: Stan kanału push (debug)
+      responses:
+        "200":
+          description: OK
 
 components:
   schemas:
