@@ -50,7 +50,6 @@ paths:
                   ok:
                     type: boolean
 
-  # === Calendar: list + single ===
   /calendar/events/json:
     get:
       operationId: listCalendarEventsJson
@@ -68,9 +67,13 @@ paths:
                     items:
                       type: object
                       properties:
-                        id:      { type: string }
-                        summary: { type: string }
-                        start:   { type: string, nullable: true }
+                        id:
+                          type: string
+                        summary:
+                          type: string
+                        start:
+                          type: string
+                          nullable: true
 
   /calendar/event:
     get:
@@ -80,16 +83,17 @@ paths:
         - in: query
           name: id
           required: true
-          schema: { type: string }
+          schema:
+            type: string
           description: ID wydarzenia z Google Calendar
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema: { type: object }
+              schema:
+                type: object
 
-  # === Calendar: create/update/delete/quickadd ===
   /calendar/create:
     post:
       operationId: calendarCreate
@@ -136,10 +140,16 @@ paths:
           application/json:
             schema:
               type: object
-              required: [id]
+              required:
+                - id
               properties:
-                id:          { type: string, description: ID wydarzenia lub serii }
-                sendUpdates: { type: string, enum: [all, externalOnly, none], default: none }
+                id:
+                  type: string
+                  description: ID wydarzenia lub serii
+                sendUpdates:
+                  type: string
+                  enum: [all, externalOnly, none]
+                  default: none
       responses:
         "200":
           description: Usunięto
@@ -148,8 +158,10 @@ paths:
               schema:
                 type: object
                 properties:
-                  ok:        { type: boolean }
-                  deletedId: { type: string }
+                  ok:
+                    type: boolean
+                  deletedId:
+                    type: string
 
   /calendar/quickadd:
     post:
@@ -161,10 +173,16 @@ paths:
           application/json:
             schema:
               type: object
-              required: [text]
+              required:
+                - text
               properties:
-                text:        { type: string, description: np. "Jutro 9:00 spotkanie z Janem na Teams" }
-                sendUpdates: { type: string, enum: [all, externalOnly, none], default: none }
+                text:
+                  type: string
+                  description: 'np. "Jutro 9:00 spotkanie z Janem na Teams"'
+                sendUpdates:
+                  type: string
+                  enum: [all, externalOnly, none]
+                  default: none
       responses:
         "200":
           description: Utworzono
@@ -173,14 +191,19 @@ paths:
               schema:
                 type: object
                 properties:
-                  id:        { type: string }
-                  htmlLink:  { type: string }
-                  status:    { type: string }
-                  start:     { type: object }
-                  end:       { type: object }
-                  summary:   { type: string }
+                  id:
+                    type: string
+                  htmlLink:
+                    type: string
+                  status:
+                    type: string
+                  start:
+                    type: object
+                  end:
+                    type: object
+                  summary:
+                    type: string
 
-  # === Calendar: instances (seria), freebusy, suggest ===
   /calendar/instances:
     get:
       operationId: calendarInstances
@@ -189,14 +212,19 @@ paths:
         - in: query
           name: id
           required: true
-          schema: { type: string }
+          schema:
+            type: string
           description: ID serii (recurringEventId)
         - in: query
           name: timeMin
-          schema: { type: string, format: date-time }
+          schema:
+            type: string
+            format: date-time
         - in: query
           name: timeMax
-          schema: { type: string, format: date-time }
+          schema:
+            type: string
+            format: date-time
       responses:
         "200":
           description: OK
@@ -205,21 +233,31 @@ paths:
               schema:
                 type: object
                 properties:
-                  seriesId: { type: string }
-                  timeMin:  { type: string }
-                  timeMax:  { type: string }
+                  seriesId:
+                    type: string
+                  timeMin:
+                    type: string
+                  timeMax:
+                    type: string
                   instances:
                     type: array
                     items:
                       type: object
                       properties:
-                        id:               { type: string }
-                        recurringEventId: { type: string }
-                        summary:          { type: string }
-                        status:           { type: string }
-                        start:            { type: object }
-                        end:              { type: object }
-                        htmlLink:         { type: string }
+                        id:
+                          type: string
+                        recurringEventId:
+                          type: string
+                        summary:
+                          type: string
+                        status:
+                          type: string
+                        start:
+                          type: object
+                        end:
+                          type: object
+                        htmlLink:
+                          type: string
 
   /calendar/freebusy:
     post:
@@ -239,16 +277,21 @@ paths:
               schema:
                 type: object
                 properties:
-                  timeMin:      { type: string }
-                  timeMax:      { type: string }
-                  calendars:    { type: object }
+                  timeMin:
+                    type: string
+                  timeMax:
+                    type: string
+                  calendars:
+                    type: object
                   busyCombined:
                     type: array
                     items:
                       type: object
                       properties:
-                        start: { type: string }
-                        end:   { type: string }
+                        start:
+                          type: string
+                        end:
+                          type: string
 
   /calendar/suggest:
     post:
@@ -268,27 +311,37 @@ paths:
               schema:
                 type: object
                 properties:
-                  timeMin:         { type: string }
-                  timeMax:         { type: string }
-                  durationMinutes: { type: integer }
+                  timeMin:
+                    type: string
+                  timeMax:
+                    type: string
+                  durationMinutes:
+                    type: integer
                   workHours:
                     type: object
                     properties:
-                      start:    { type: string }
-                      end:      { type: string }
-                      timeZone: { type: string }
-                  includeWeekends: { type: boolean }
-                  stepMinutes:     { type: integer }
-                  limitRequested:  { type: integer }
+                      start:
+                        type: string
+                      end:
+                        type: string
+                      timeZone:
+                        type: string
+                  includeWeekends:
+                    type: boolean
+                  stepMinutes:
+                    type: integer
+                  limitRequested:
+                    type: integer
                   slots:
                     type: array
                     items:
                       type: object
                       properties:
-                        startISO: { type: string }
-                        endISO:   { type: string }
+                        startISO:
+                          type: string
+                        endISO:
+                          type: string
 
-  # === Calendar: Push (watch/stop/state) ===
   /calendar/watch:
     post:
       operationId: calendarWatch
@@ -301,12 +354,18 @@ paths:
               schema:
                 type: object
                 properties:
-                  ok:         { type: boolean }
-                  channelId:  { type: string }
-                  resourceId: { type: string }
-                  expiration: { type: string }
-                  syncToken:  { type: string }
-                  callback:   { type: string }
+                  ok:
+                    type: boolean
+                  channelId:
+                    type: string
+                  resourceId:
+                    type: string
+                  expiration:
+                    type: string
+                  syncToken:
+                    type: string
+                  callback:
+                    type: string
 
   /calendar/watch/stop:
     post:
@@ -320,8 +379,10 @@ paths:
               schema:
                 type: object
                 properties:
-                  ok:            { type: boolean }
-                  alreadyStopped:{ type: boolean }
+                  ok:
+                    type: boolean
+                  alreadyStopped:
+                    type: boolean
 
   /calendar/watch/state:
     get:
@@ -335,16 +396,24 @@ paths:
               schema:
                 type: object
                 properties:
-                  channelId:        { type: string, nullable: true }
-                  resourceId:       { type: string, nullable: true }
-                  expiration:       { type: string, nullable: true }
-                  hasSyncToken:     { type: boolean }
-                  lastChangesCount: { type: integer }
+                  channelId:
+                    type: string
+                    nullable: true
+                  resourceId:
+                    type: string
+                    nullable: true
+                  expiration:
+                    type: string
+                    nullable: true
+                  hasSyncToken:
+                    type: boolean
+                  lastChangesCount:
+                    type: integer
                   history:
                     type: array
-                    items: { type: object }
+                    items:
+                      type: object
 
-  # === Gmail ===
   /gmail/messages:
     get:
       operationId: listGmailMessages
@@ -352,8 +421,9 @@ paths:
       parameters:
         - in: query
           name: q
-          schema: { type: string }
-          description: Zapytanie Gmail, np. newer_than:7d subject:"faktura" from:adres@domena
+          schema:
+            type: string
+          description: 'np. newer_than:7d subject:"faktura" from:adres@domena'
       responses:
         "200":
           description: OK
@@ -367,11 +437,16 @@ paths:
                     items:
                       type: object
                       properties:
-                        id:      { type: string }
-                        snippet: { type: string }
-                        subject: { type: string }
-                        from:    { type: string }
-                        date:    { type: string }
+                        id:
+                          type: string
+                        snippet:
+                          type: string
+                        subject:
+                          type: string
+                        from:
+                          type: string
+                        date:
+                          type: string
 
   /gmail/send:
     post:
@@ -391,10 +466,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  id:       { type: string }
+                  id:
+                    type: string
                   labelIds:
                     type: array
-                    items: { type: string }
+                    items:
+                      type: string
 
   /gmail/reply:
     post:
@@ -414,13 +491,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  id:       { type: string }
-                  threadId: { type: string }
+                  id:
+                    type: string
+                  threadId:
+                    type: string
                   labelIds:
                     type: array
-                    items: { type: string }
+                    items:
+                      type: string
 
-  # === Drive ===
   /drive/search:
     get:
       operationId: searchDriveFiles
@@ -428,7 +507,8 @@ paths:
       parameters:
         - in: query
           name: q
-          schema: { type: string }
+          schema:
+            type: string
           description: Fraza do wyszukania w nazwie pliku
       responses:
         "200":
@@ -440,7 +520,6 @@ paths:
                 items:
                   $ref: "#/components/schemas/DriveFile"
 
-  # === Places (New) ===
   /places/search:
     get:
       operationId: searchPlaces
@@ -448,19 +527,23 @@ paths:
       parameters:
         - in: query
           name: q
-          schema: { type: string }
+          schema:
+            type: string
           description: Fraza, np. "kawiarnia", "pizza", "siłownia"
         - in: query
           name: lat
-          schema: { type: number }
+          schema:
+            type: number
           description: Szerokość geograficzna (domyślnie Warszawa 52.2297)
         - in: query
           name: lng
-          schema: { type: number }
+          schema:
+            type: number
           description: Długość geograficzna (domyślnie 21.0122)
         - in: query
           name: radius
-          schema: { type: integer }
+          schema:
+            type: integer
           description: Promień w metrach (domyślnie 3000)
       responses:
         "200":
@@ -478,7 +561,8 @@ paths:
         - in: query
           name: place_id
           required: true
-          schema: { type: string }
+          schema:
+            type: string
           description: Identyfikator miejsca (np. "places/XXXX...")
       responses:
         "200":
@@ -499,192 +583,334 @@ components:
   schemas:
     CalendarCreateRequest:
       type: object
-      required: [summary, startISO, endISO]
+      required:
+        - summary
+        - startISO
+        - endISO
       properties:
-        summary:     { type: string }
-        description: { type: string }
-        location:    { type: string }
-        startISO:    { type: string, description: "ISO-8601; dla całego dnia użyj YYYY-MM-DD" }
-        endISO:      { type: string, description: "ISO-8601; dla całego dnia użyj YYYY-MM-DD" }
-        timeZone:    { type: string, default: Europe/Warsaw }
+        summary:
+          type: string
+        description:
+          type: string
+        location:
+          type: string
+        startISO:
+          type: string
+          description: "ISO-8601; dla całego dnia użyj YYYY-MM-DD"
+        endISO:
+          type: string
+          description: "ISO-8601; dla całego dnia użyj YYYY-MM-DD"
+        timeZone:
+          type: string
+          default: Europe/Warsaw
         attendeesEmails:
           type: array
-          items: { type: string }
-        remindersMinutes: { type: integer, minimum: 0 }
+          items:
+            type: string
+        remindersMinutes:
+          type: integer
+          minimum: 0
         recurrence:
           type: array
-          items: { type: string, description: "np. RRULE:FREQ=WEEKLY;BYDAY=MO,WE" }
-        createMeet:  { type: boolean, default: false }
-        sendUpdates: { type: string, enum: [all, externalOnly, none], default: none }
+          items:
+            type: string
+        createMeet:
+          type: boolean
+          default: false
+        sendUpdates:
+          type: string
+          enum: [all, externalOnly, none]
+          default: none
 
     CalendarUpdateRequest:
       type: object
-      required: [id]
+      required:
+        - id
       properties:
-        id:          { type: string }
-        summary:     { type: string }
-        description: { type: string }
-        location:    { type: string }
-        startISO:    { type: string }
-        endISO:      { type: string }
-        timeZone:    { type: string, default: Europe/Warsaw }
+        id:
+          type: string
+        summary:
+          type: string
+        description:
+          type: string
+        location:
+          type: string
+        startISO:
+          type: string
+        endISO:
+          type: string
+        timeZone:
+          type: string
+          default: Europe/Warsaw
         attendeesEmails:
           type: array
-          items: { type: string }
-        remindersMinutes: { type: integer, minimum: 0 }
+          items:
+            type: string
+        remindersMinutes:
+          type: integer
+          minimum: 0
         recurrence:
           type: array
-          items: { type: string }
-        createMeet:  { type: boolean }
-        sendUpdates: { type: string, enum: [all, externalOnly, none], default: none }
+          items:
+            type: string
+        createMeet:
+          type: boolean
+        sendUpdates:
+          type: string
+          enum: [all, externalOnly, none]
+          default: none
 
     CalendarEventCreated:
       type: object
       properties:
-        id:            { type: string }
-        htmlLink:      { type: string }
-        status:        { type: string }
-        start:         { type: object }
-        end:           { type: object }
-        summary:       { type: string }
-        hangoutLink:   { type: string, nullable: true }
-        conferenceData:{ type: object, nullable: true }
+        id:
+          type: string
+        htmlLink:
+          type: string
+        status:
+          type: string
+        start:
+          type: object
+        end:
+          type: object
+        summary:
+          type: string
+        hangoutLink:
+          type: string
+          nullable: true
+        conferenceData:
+          type: object
+          nullable: true
 
     CalendarEventUpdated:
       allOf:
         - $ref: "#/components/schemas/CalendarEventCreated"
         - type: object
           properties:
-            updated: { type: string }
+            updated:
+              type: string
 
     FreeBusyRequest:
       type: object
-      required: [timeMin, timeMax]
+      required:
+        - timeMin
+        - timeMax
       properties:
-        timeMin:            { type: string, format: date-time }
-        timeMax:            { type: string, format: date-time }
+        timeMin:
+          type: string
+          format: date-time
+        timeMax:
+          type: string
+          format: date-time
         attendeesCalendars:
           type: array
-          items: { type: string }
+          items:
+            type: string
 
     SuggestRequest:
       type: object
-      required: [durationMinutes]
+      required:
+        - durationMinutes
       properties:
-        timeMin:  { type: string, format: date-time }
-        timeMax:  { type: string, format: date-time }
-        durationMinutes:     { type: integer, minimum: 1 }
+        timeMin:
+          type: string
+          format: date-time
+        timeMax:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+          minimum: 1
         attendeesCalendars:
           type: array
-          items: { type: string }
+          items:
+            type: string
         workHours:
           type: object
           properties:
-            start:    { type: string, example: "08:00" }
-            end:      { type: string, example: "18:00" }
-            timeZone: { type: string, default: Europe/Warsaw }
-        includeWeekends:      { type: boolean, default: false }
-        bufferMinutesBefore:  { type: integer, default: 0 }
-        bufferMinutesAfter:   { type: integer, default: 0 }
-        stepMinutes:          { type: integer, default: 30 }
-        limit:                { type: integer, default: 20 }
+            start:
+              type: string
+            end:
+              type: string
+            timeZone:
+              type: string
+              default: Europe/Warsaw
+        includeWeekends:
+          type: boolean
+          default: false
+        bufferMinutesBefore:
+          type: integer
+          default: 0
+        bufferMinutesAfter:
+          type: integer
+          default: 0
+        stepMinutes:
+          type: integer
+          default: 30
+        limit:
+          type: integer
+          default: 20
 
     GmailSendRequest:
       type: object
-      required: [to, subject]
+      required:
+        - to
+        - subject
       properties:
-        to:          { type: string }
-        subject:     { type: string }
-        text:        { type: string }
-        html:        { type: string }
-        from:        { type: string }
+        to:
+            type: string
+        subject:
+            type: string
+        text:
+            type: string
+        html:
+            type: string
+        from:
+            type: string
         attachments:
           type: array
-          description: Załączniki (Base64, bez prefiksów)
           items:
             type: object
             properties:
-              filename: { type: string }
-              mimeType: { type: string }
-              data:     { type: string, description: "Base64" }
+              filename:
+                type: string
+              mimeType:
+                type: string
+              data:
+                type: string
+                description: Base64
 
     GmailReplyRequest:
       type: object
       properties:
-        replyToMessageId: { type: string, description: "ID oryginalnej wiadomości (jeśli brak threadId)" }
-        threadId:         { type: string, description: "ID wątku (jeśli znane)" }
-        to:               { type: string, description: "Jeśli nie podasz, zostanie użyte Reply-To/From z oryginału" }
-        subject:          { type: string }
-        text:             { type: string }
-        html:             { type: string }
+        replyToMessageId:
+          type: string
+        threadId:
+          type: string
+        to:
+          type: string
+        subject:
+          type: string
+        text:
+          type: string
+        html:
+          type: string
         attachments:
           type: array
           items:
             type: object
             properties:
-              filename: { type: string }
-              mimeType: { type: string }
-              data:     { type: string, description: "Base64" }
-        inReplyTo:        { type: string }
-        references:       { type: string }
+              filename:
+                type: string
+              mimeType:
+                type: string
+              data:
+                type: string
+                description: Base64
+        inReplyTo:
+          type: string
+        references:
+          type: string
 
     DriveFile:
       type: object
       properties:
-        id:          { type: string }
-        name:        { type: string }
-        mimeType:    { type: string }
-        modifiedTime:{ type: string }
+        id:
+          type: string
+        name:
+          type: string
+        mimeType:
+          type: string
+        modifiedTime:
+          type: string
 
     PlacesSearchResponse:
       type: object
       properties:
-        query:  { type: string }
-        lat:    { type: number }
-        lng:    { type: number }
-        radius: { type: integer }
+        query:
+          type: string
+        lat:
+          type: number
+        lng:
+          type: number
+        radius:
+          type: integer
         results:
           type: array
           items:
             type: object
             properties:
-              place_name:         { type: string }
-              displayName:        { type: string }
-              address:            { type: string }
-              rating:             { type: number, nullable: true }
-              user_ratings_total: { type: integer, nullable: true }
-              phone:              { type: string, nullable: true }
-              website:            { type: string, nullable: true }
+              place_name:
+                type: string
+              displayName:
+                type: string
+              address:
+                type: string
+              rating:
+                type: number
+                nullable: true
+              user_ratings_total:
+                type: integer
+                nullable: true
+              phone:
+                type: string
+                nullable: true
+              website:
+                type: string
+                nullable: true
               open_weekdays:
                 type: array
-                items: { type: string }
+                items:
+                  type: string
               location:
                 type: object
                 properties:
-                  lat: { type: number, nullable: true }
-                  lng: { type: number, nullable: true }
+                  lat:
+                    type: number
+                    nullable: true
+                  lng:
+                    type: number
+                    nullable: true
               types:
                 type: array
-                items: { type: string }
+                items:
+                  type: string
 
     PlaceDetails:
       type: object
       properties:
-        place_name:         { type: string }
-        name:               { type: string }
-        address:            { type: string }
-        phone:              { type: string, nullable: true }
-        website:            { type: string, nullable: true }
-        rating:             { type: number, nullable: true }
-        user_ratings_total: { type: integer, nullable: true }
+        place_name:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        rating:
+          type: number
+          nullable: true
+        user_ratings_total:
+          type: integer
+          nullable: true
         open_weekdays:
           type: array
-          items: { type: string }
+          items:
+            type: string
         location:
           type: object
           properties:
-            lat: { type: number, nullable: true }
-            lng: { type: number, nullable: true }
+            lat:
+              type: number
+              nullable: true
+            lng:
+              type: number
+              nullable: true
         types:
           type: array
-          items: { type: string }
+          items:
+            type: string
