@@ -15,7 +15,11 @@ paths:
           description: OK
           content:
             application/json:
-              schema: { type: object, properties: { ok: { type: boolean } } }
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
 
   /auth/status:
     get:
@@ -26,19 +30,25 @@ paths:
           description: Tekstowy status (refresh_token: TAK/NIE)
           content:
             text/plain:
-              schema: { type: string }
+              schema:
+                type: string
 
   /auth/reset:
     get:
       operationId: authReset
       summary: Wyczyść tokeny i stan webhooka (ADMIN)
-      security: [{ AdminToken: [] }]
+      security:
+        - AdminToken: []
       responses:
         "200":
           description: Zresetowano
           content:
             application/json:
-              schema: { type: object, properties: { ok: { type: boolean } } }
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
 
   # === Calendar: list + single ===
   /calendar/events/json:
