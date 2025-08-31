@@ -1097,6 +1097,205 @@ server.on("error", (err) => {
  * Lista instancji (wystąpień) dla wydarzenia cyklicznego
  * GET /calendar/instances?id=SERIES_ID&timeMin=...&timeMax=...
  */
+app.g// === KALENDARZ: PUSH (webhooki) ===
+const PUBLIC_URL = process.env.PUBLIC_URL || process.env.BASE_URL || "https://ai.aneuroasystent.pl";
+const WATCH_TOKEN = process.env.WATCH_TOKEN || process.env.SESSION_SECRET || "dev-token";
+
+// Pamięć prostego kanału (na produkcji warto trwale: DB/kv)
+let CAL_PUSH = {
+  channelId: null,
+  resourceId: null,
+  expiration: null,
+  syncToken: null,
+  lastChanges: [],   // ostatnia partia zmian
+  history: []        // nagłówki powiadomień do debug
+};
+
+// Pomocniczo: pełna synchronizacja żeby zdobyć nextSyncToken
+async function getFreshSyncToken(calendar) {
+  let pageToken = undefined;
+  let nextSyncToken = null;
+  do {
+    const resp = await calendar.events.list({
+      calendarId: "primary",
+      showDeleted: true,
+      singleEvents: true,
+      maxResults: 2500,
+      pageToken
+    });
+    pageToken = resp.data.nextPageToken || null;
+    nextSyncToken = resp.data.nextSyncToken || nextSyncToken;
+  } while (pageToken);
+  return nextSyncToken;
+}
+
+/**
+ * START: utwórz kanał webhook + pobierz syncToken
+ * POST /calendar/watch
+ */
+app.post("/calendar/watch", async (req, res) => {
+  try {
+    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    oAuth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+
+    const channelId = crypto.randomUUID();
+    const address = `${PUBLIC_URL}/calendar/notifications`; // musi być HTTPS publiczny
+
+    const watchResp = await calendar.events.watch({
+      calendarId: "primary",
+      requestBody: {
+        id: channelId,
+        type: "web_hook",
+        address,
+        token: WATCH_TOKEN
+        // Uwaga: Calendar API nie wspiera 'params.ttl' jak Drive
+      }
+    });
+
+    // zapisz parametry kanału
+    CAL_PUSH.channelId = watchResp.data.id || channelId;
+    CAL_PUSH.resourceId = watchResp.data.resourceId || null;
+    CAL_PUSH.expiration = watchResp.data.expiration || null;
+
+    // pobierz świeży syncToken
+    CAL_PUSH.syncToken = await getFreshSyncToken(calendar);
+
+    return res.json({
+      ok: true,
+      channelId: CAL_PUSH.channelId,
+      resourceId: CAL_PUSH.resourceId,
+      expiration: CAL_PUSH.expiration,
+      syncToken: CAL_PUSH.syncToken,
+      callback: address
+    });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || e?.toString() || "unknown" };
+    console.error("calendar/watch error:", details);
+    return res.status(status).json({ error: "calendar_watch_failed", status, details });
+  }
+});
+
+/**
+ * STOP: wyrejestruj kanał
+ * POST /calendar/watch/stop
+ */
+app.post("/calendar/watch/stop", async (req, res) => {
+  try {
+    if (!userTokens) return res.status(401).json({ error: "Brak autoryzacji – /oauth2/start" });
+    if (!CAL_PUSH.channelId || !CAL_PUSH.resourceId) {
+      return res.json({ ok: true, alreadyStopped: true });
+    }
+    oAuth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+    await calendar.channels.stop({
+      requestBody: { id: CAL_PUSH.channelId, resourceId: CAL_PUSH.resourceId }
+    });
+    CAL_PUSH.channelId = null;
+    CAL_PUSH.resourceId = null;
+    CAL_PUSH.expiration = null;
+    return res.json({ ok: true });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const details = e?.response?.data || { message: e?.message || "unknown" };
+    console.error("calendar/watch/stop error:", details);
+    return res.status(status).json({ error: "calendar_watch_stop_failed", status, details });
+  }
+});
+
+/**
+ * STAN: podgląd kanału i ostatnich zmian
+ * GET /calendar/watch/state
+ */
+app.get("/calendar/watch/state", async (_req, res) => {
+  return res.json({
+    channelId: CAL_PUSH.channelId,
+    resourceId: CAL_PUSH.resourceId,
+    expiration: CAL_PUSH.expiration,
+    hasSyncToken: Boolean(CAL_PUSH.syncToken),
+    lastChangesCount: (CAL_PUSH.lastChanges || []).length,
+    history: CAL_PUSH.history.slice(-20) // ostatnie 20 nagłówków
+  });
+});
+
+/**
+ * CALLBACK (webhook) – Google POSTuje tutaj puste body z nagłówkami X-Goog-*
+ * POST /calendar/notifications
+ */
+app.post("/calendar/notifications", async (req, res) => {
+  try {
+    // 1) weryfikacja kanału i tokena
+    const hdr = {
+      state: req.get("X-Goog-Resource-State"),
+      resId: req.get("X-Goog-Resource-Id"),
+      chanId: req.get("X-Goog-Channel-Id"),
+      token: req.get("X-Goog-Channel-Token"),
+      msgNo: req.get("X-Goog-Message-Number"),
+      exp: req.get("X-Goog-Channel-Expiration"),
+      uri: req.get("X-Goog-Resource-URI")
+    };
+    CAL_PUSH.history.push({ ts: new Date().toISOString(), ...hdr });
+    if (hdr.chanId && CAL_PUSH.channelId && hdr.chanId !== CAL_PUSH.channelId) {
+      return res.status(202).send("Different channel; ignoring");
+    }
+    if (WATCH_TOKEN && hdr.token && hdr.token !== WATCH_TOKEN) {
+      return res.status(403).send("Invalid channel token");
+    }
+
+    // 2) szybka odpowiedź, potem pobranie zmian
+    res.status(200).send("OK");
+
+    // 3) pobierz różnice z syncToken
+    if (!userTokens || !CAL_PUSH.syncToken) return;
+    oAuth2Client.setCredentials(userTokens);
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+
+    let pageToken;
+    const changes = [];
+
+    while (true) {
+      try {
+        const resp = await calendar.events.list({
+          calendarId: "primary",
+          syncToken: CAL_PUSH.syncToken,
+          showDeleted: true,
+          singleEvents: true,
+          pageToken
+        });
+        (resp.data.items || []).forEach(ev => {
+          changes.push({
+            id: ev.id,
+            status: ev.status,         // "confirmed" / "cancelled"
+            summary: ev.summary,
+            start: ev.start,
+            end: ev.end,
+            updated: ev.updated
+          });
+        });
+        if (resp.data.nextPageToken) {
+          pageToken = resp.data.nextPageToken;
+        } else {
+          CAL_PUSH.syncToken = resp.data.nextSyncToken || CAL_PUSH.syncToken;
+          break;
+        }
+      } catch (err) {
+        // Sync token wygasł – zrób pełną sync ponownie (410 GONE)
+        if (err?.code === 410 || err?.response?.status === 410) {
+          CAL_PUSH.syncToken = await getFreshSyncToken(calendar);
+          break;
+        }
+        console.error("notifications diff error:", err?.response?.data || err?.message || err);
+        break;
+      }
+    }
+
+    CAL_PUSH.lastChanges = changes;
+  } catch (e) {
+    console.error("notifications handler error:", e?.message || e);
+    // w webhooku nigdy nie rzucamy 500 – nic nie zwracamy bo mogło już pójść 200 OK
+  }
+});
 app.get("/calendar/instances", async (req, res) => {
   try {
     if (!userTokens) {
@@ -1139,6 +1338,7 @@ app.get("/calendar/instances", async (req, res) => {
     return res.status(status).json({ error: "calendar_instances_failed", status, details });
   }
 });
+
 /**
  * Free/Busy – zajętość kalendarzy
  * POST /calendar/freebusy
