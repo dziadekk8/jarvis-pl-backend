@@ -1,20 +1,17 @@
-openapi: 3.0.3
+﻿openapi: 3.0.3
 info:
-  title: Jarvis-PL API (Public)
+  title: Jarvis-PL API (Public for GPT Actions)
   version: "1.3.0"
-  description: |
-    Publiczny opis API dla Twojego asystenta. Zawiera minimalny, praktyczny zestaw endpointów:
-    - `/` oraz `/health` do podstawowych testów,
-    - `/drive/search` z paginacją, CSV, filtrem `namePrefix` (seed `name contains '<prefix>'` + prefix-aware paging),
-    - `/gmail/messages` z paginacją, `raw=1` oraz lekkim trybem metadanych `expand=1`.
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
+
 servers:
   - url: https://ai.aneuroasystent.pl
-    description: Produkcyjny serwer
+    description: Production
   - url: http://localhost:8080
     description: Lokalny serwer deweloperski
+
 security: []
 
 paths:
@@ -29,10 +26,16 @@ paths:
             text/plain:
               schema: { type: string }
         "4XX":
-          description: Błąd
+          description: Błąd zapytania
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /health:
     get:
       operationId: health
@@ -47,111 +50,140 @@ paths:
                 properties:
                   ok: { type: boolean }
         "4XX":
-          description: Błąd
+          description: Błąd zapytania
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /oauth2/start:
+    get:
+      operationId: oauth2Start
+      summary: Rozpocznij autoryzację OAuth2 (Google)
+      description: Zwraca przekierowanie do ekranu zgody Google (w praktyce 302). Dla lintera zwracamy 200.
+      responses:
+        "200":
+          description: OK (opis informacyjny dla lintera; w praktyce endpoint robi 302)
+          content:
+            text/plain:
+              schema: { type: string }
+        "4XX":
+          description: Błąd danych / uprawnień
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /calendar/create:
+    post:
+      operationId: createCalendarEvent
+      summary: Tworzy wydarzenie w kalendarzu (primary) — opcjonalnie z Google Meet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateEventRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateEventResponse" }
+        "4XX":
+          description: Błąd danych / uprawnień
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera / Calendar
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   /drive/search:
     get:
-      operationId: driveSearch
+      operationId: searchDriveFiles
       summary: Szukaj plików w Google Drive
-      description: >
-        Obsługuje paginację (`pageToken`, `raw=1`), eksport CSV (`export=csv`, `allPages=1`, `maxTotal`).
-        Dla parametru `namePrefix` backend stosuje dwustopniowe zawężenie:
-        (1) seed po stronie Google Drive: dodaje warunek `name contains '<prefix>'` do zapytania,
-        (2) ścisły prefiks (case-insensitive) po stronie serwera oraz prefix-aware paging — kolejne strony
-        są skanowane do czasu zebrania `pageSize` trafień (limit bezpieczeństwa).
+      description: Obsługuje paginację, sortowanie i filtrowanie po prefiksie nazwy oraz MIME.
       parameters:
         - in: query
           name: q
           schema: { type: string }
-          description: Zapytanie (np. `fulltext`, nazwa pliku itp.)
-        - in: query
-          name: fulltext
-          schema: { type: string }
-          description: Szukanie w treści (Google Drive fullText).
+          description: Własne zapytanie Drive (np. trashed = false).
         - in: query
           name: type
           schema: { type: string }
-          description: Skrót typu (np. pdf, docx, folder, image, video, xlsx...) albo `mime:...`.
-        - in: query
-          name: pageSize
-          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
-          description: Liczba wyników na stronę.
-        - in: query
-          name: pageToken
-          schema: { type: string }
-          description: Token kolejnej strony wyników.
-        - in: query
-          name: export
-          schema: { type: string, enum: [csv, json] }
-          description: Gdy `csv` — zwraca CSV (nagłówek `Content-Disposition`).
-        - in: query
-          name: allPages
-          schema: { type: boolean, default: false }
-          description: Dla `export=csv` — pobiera wszystkie strony (do limitu `maxTotal`).
-        - in: query
-          name: maxTotal
-          schema: { type: integer, default: 2000, minimum: 1, maximum: 10000 }
-          description: Limit łącznej liczby rekordów (CSV).
-        - in: query
-          name: raw
-          schema: { type: boolean, default: false }
-          description: Gdy `true` — zwraca obiekt `{ files, nextPageToken, ... }`.
+          description: Np. pdf, docx, xlsx lub pełny MIME (mime:application/pdf).
         - in: query
           name: namePrefix
           schema: { type: string }
-          description: "Prefiks nazwy (case-insensitive). Backend seeduje zapytanie Drive (`name contains '<prefix>'`) i filtruje lokalnie prefiks oraz skanuje kolejne strony (prefix-aware paging), aż zbierze `pageSize` trafień."
+          description: Filtruj pliki, których nazwa zaczyna się od tej frazy (case-insensitive).
         - in: query
           name: sort
-          schema: { type: string, enum: [modified, name], default: modified }
-          description: Sortowanie po `modified` lub `name`.
+          schema:
+            type: string
+            enum: [name, modified]
+            default: modified
+          description: Sortuj po nazwie lub dacie modyfikacji.
         - in: query
           name: sortDir
-          schema: { type: string, enum: [asc, desc] }
-          description: Kierunek sortowania (domyślnie `desc` dla `modified`, `asc` dla `name`).
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+          description: Kierunek sortowania.
         - in: query
-          name: includeShared
-          schema: { type: boolean, default: true }
-          description: "Czy uwzględniać pliki współdzielone i z Dysków współdzielonych. Gdy false — zwraca tylko pliki, których jesteś właścicielem (`'me' in owners`)."
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100 }
+          description: Liczba elementów na stronę (domyślnie 10).
         - in: query
-          name: ext
+          name: pageToken
           schema: { type: string }
-          description: "Lista rozszerzeń, rozdzielona przecinkami (np. `pdf,docx,zip`). Seed: `name contains '.ext'`, a następnie lokalne `endsWith('.ext')` (case-insensitive)."
+          description: Token kolejnej strony z poprzedniej odpowiedzi.
+        - in: query
+          name: raw
+          schema: { type: boolean }
+          description: Gdy true/1 – zwróci surową odpowiedź Google (klucz `files` + `nextPageToken`).
+        - in: query
+          name: export
+          schema:
+            type: string
+            enum: [csv]
+          description: Jeśli `csv`, zwróci CSV zamiast JSON.
+        - in: query
+          name: allPages
+          schema: { type: boolean }
+          description: Gdy true/1 – pobierze wszystkie strony aż do `maxTotal`.
+        - in: query
+          name: maxTotal
+          schema: { type: integer }
+          description: Limit łącznej liczby plików przy allPages=1 (CSV).
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                oneOf:
-                  - type: array
-                    items: { type: object }
-                  - type: object
-                    properties:
-                      files:
-                        type: array
-                        items: { type: object }
-                      nextPageToken: { type: string }
-                      pageSize: { type: integer }
-                      q: { type: string }
-                      orderBy: { type: string }
-                      namePrefix: { type: string }
-                      sort: { type: string }
-                      sortDir: { type: string }
-                      includeShared: { type: boolean }
-                      ext:
-                        type: array
-                        items: { type: string }
-                      scans: { type: integer }
+                $ref: "#/components/schemas/DriveSearchResponse"
+            text/csv:
+              schema:
+                type: string
+                description: CSV z kolumnami id,name,mimeType,modifiedTime,ownerName,ownerEmail,webViewLink,size
         "4XX":
-          description: Błąd zapytania
+          description: Błąd zapytania / uprawnień
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "5XX":
-          description: Błąd serwera / Google Drive
+          description: Błąd serwera
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -159,58 +191,179 @@ paths:
   /gmail/messages:
     get:
       operationId: listGmailMessages
-      summary: Lista wiadomości Gmail z paginacją
-      description: >
-        Zwraca listę wiadomości. Parametr `q` przyjmuje pełną składnię wyszukiwania Gmail
-        (np. `newer_than:7d subject:"faktura" from:@allegro.pl has:attachment`).  
-        Ustaw `expand=1`, aby otrzymać lekkie metadane (Subject/From/To/Date + snippet) bez pełnych treści.  
-        Ustaw `raw=1`, aby otrzymać obiekt `{ messages, nextPageToken, pageSize, q }` zamiast samej tablicy.
+      summary: Pobierz listę wiadomości Gmail (ostatnie/filtr)
       parameters:
         - in: query
           name: q
           schema: { type: string }
-          description: Składnia wyszukiwania Gmail (np. newer_than:7d subject:"faktura" from:... has:attachment).
+          description: Zapytanie Gmail, np. newer_than:7d subject:"faktura" has:attachment
         - in: query
           name: pageSize
-          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
-          description: Liczba wyników na stronę (1–100).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+          description: Domyślnie 10
         - in: query
           name: pageToken
           schema: { type: string }
-          description: Token kolejnej strony wyników (z poprzedniego wywołania).
+          description: Token do kolejnej strony
         - in: query
           name: expand
-          schema: { type: boolean, default: false }
-          description: Gdy true — dołącza lekkie metadane wiadomości (Subject/From/To/Date + snippet).
+          schema: { type: boolean }
+          description: Gdy true/1 – zwróci więcej pól (subject, from, date) w liście
         - in: query
           name: raw
-          schema: { type: boolean, default: false }
-          description: Gdy true — zwraca obiekt z messages i nextPageToken. Domyślnie zwraca samą tablicę.
+          schema: { type: boolean }
+          description: Gdy true/1 – dołączy surową odpowiedź Google
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                oneOf:
-                  - type: array
+                type: object
+                properties:
+                  messages:
+                    type: array
                     items:
-                      oneOf:
-                        - $ref: "#/components/schemas/GmailMessageMinimal"
-                        - $ref: "#/components/schemas/GmailMessageExpanded"
-                  - type: object
-                    properties:
-                      messages:
-                        type: array
-                        items:
-                          oneOf:
-                            - $ref: "#/components/schemas/GmailMessageMinimal"
-                            - $ref: "#/components/schemas/GmailMessageExpanded"
-                      nextPageToken: { type: string }
-                      pageSize: { type: integer }
-                      q: { type: string }
+                      $ref: "#/components/schemas/GmailMessageListItem"
         "4XX":
-          description: Błąd zapytania
+          description: Błąd zapytania / uprawnień
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera / Gmail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /gmail/message:
+    get:
+      operationId: getGmailMessage
+      summary: Szczegóły pojedynczej wiadomości (body + załączniki)
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema: { type: string }
+          description: ID wiadomości Gmail
+        - in: query
+          name: raw
+          schema: { type: boolean }
+          description: Gdy true/1 – dołączy surową odpowiedź Google
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GmailMessageDetails"
+        "4XX":
+          description: Błąd zapytania / uprawnień
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera / Gmail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /gmail/attachment:
+    get:
+      operationId: getGmailAttachment
+      summary: Pobierz binarną zawartość załącznika
+      parameters:
+        - in: query
+          name: messageId
+          required: true
+          schema: { type: string }
+          description: ID wiadomości (messageId)
+        - in: query
+          name: attachmentId
+          required: true
+          schema: { type: string }
+          description: ID załącznika (attachmentId z /gmail/message)
+        - in: query
+          name: filename
+          schema: { type: string }
+          description: Sugerowana nazwa pliku (Content-Disposition filename)
+        - in: query
+          name: disposition
+          schema:
+            type: string
+            enum: [attachment, inline]
+            default: attachment
+          description: attachment (pobieranie) lub inline (podgląd)
+        - in: query
+          name: contentType
+          schema: { type: string }
+          description: Domyślnie application/octet-stream
+      responses:
+        "200":
+          description: OK (binarny strumień)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "4XX":
+          description: Błąd zapytania / uprawnień
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera / Gmail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /gmail/send:
+    post:
+      operationId: sendGmail
+      summary: Wysyła wiadomość (HTML/plain + załączniki)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMailRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendMailResponse"
+        "4XX":
+          description: Błąd danych / uprawnień
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera / Gmail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /gmail/reply:
+    post:
+      operationId: gmailReply
+      summary: Odpowiada w wątku (thread) — ustawia In-Reply-To/References
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplyMailRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplyMailResponse"
+        "4XX":
+          description: Błąd danych / uprawnień
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -227,28 +380,177 @@ components:
       properties:
         error:
           type: string
-          description: Krótki kod/typ błędu
+          description: "Krótki kod/typ błędu (np. drive_search_failed)"
         status:
           type: integer
-          description: HTTP status
+          description: "HTTP status związany z błędem"
         details:
           type: object
-          description: Dodatkowe szczegóły błędu
+          description: "Dodatkowe szczegóły błędu"
           additionalProperties: true
 
-    GmailMessageMinimal:
+    AuthStatus:
       type: object
       properties:
-        id: { type: string, description: ID wiadomości }
-        threadId: { type: string, description: ID wątku }
+        loggedIn:     { type: boolean }
+        refreshToken: { type: boolean }
+        scopes:
+          type: array
+          items: { type: string }
 
-    GmailMessageExpanded:
+    CreateEventRequest:
       type: object
       properties:
-        id: { type: string }
-        threadId: { type: string }
+        summary:     { type: string }
+        description: { type: string }
+        location:    { type: string }
+        startISO:    { type: string, description: "ISO 8601 lub YYYY-MM-DD (całodniowe)" }
+        endISO:      { type: string, description: "ISO 8601 lub YYYY-MM-DD (całodniowe)" }
+        timeZone:    { type: string, default: "Europe/Warsaw" }
+        attendeesEmails:
+          type: array
+          items: { type: string }
+        createMeet:  { type: boolean, description: "Jeśli true, doda Google Meet" }
+        sendUpdates:
+          type: string
+          enum: [all, none]
+          default: none
+
+    CreateEventResponse:
+      type: object
+      properties:
+        id:          { type: string }
+        htmlLink:    { type: string }
+        hangoutLink: { type: string }
+        conferenceData:
+          type: object
+          additionalProperties: true
+
+    DriveFile:
+      type: object
+      properties:
+        id:           { type: string }
+        name:         { type: string }
+        mimeType:     { type: string }
+        modifiedTime: { type: string }
+        webViewLink:  { type: string }
+        iconLink:     { type: string }
+        size:         { type: string }
+        owners:
+          type: array
+          items:
+            type: object
+            properties:
+              displayName:  { type: string }
+              emailAddress: { type: string }
+
+    DriveSearchResponse:
+      type: object
+      properties:
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/DriveFile" }
+        nextPageToken: { type: string }
+        pageSize:      { type: integer }
+        q:             { type: string }
+        orderBy:       { type: string }
+        namePrefix:    { type: string }
+        sort:          { type: string, description: "name | modified" }
+        sortDir:       { type: string, description: "asc | desc" }
+        scans:         { type: integer, description: "Ilość stron pobranych z Drive (przy allPages)" }
+
+    GmailMessageListItem:
+      type: object
+      properties:
+        id:      { type: string }
+        snippet: { type: string }
         subject: { type: string }
-        from: { type: string }
-        to: { type: string }
-        date: { type: string, description: Data w formacie ISO 8601 (o ile da się sparsować nagłówek Date) }
-        snippet: { type: string, description: Krótki fragment treści zwracany przez Gmail API }
+        from:    { type: string }
+        date:    { type: string, description: "ISO 8601" }
+
+    GmailMessageDetails:
+      type: object
+      properties:
+        id:       { type: string }
+        threadId: { type: string }
+        subject:  { type: string }
+        from:     { type: string }
+        to:       { type: string }
+        date:     { type: string, description: "ISO 8601" }
+        snippet:  { type: string }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        body:
+          type: object
+          properties:
+            html: { type: string }
+            text: { type: string }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/GmailAttachmentMeta" }
+
+    GmailAttachmentMeta:
+      type: object
+      properties:
+        filename:     { type: string }
+        mimeType:     { type: string }
+        size:         { type: integer }
+        attachmentId: { type: string }
+        partId:       { type: string }
+
+    GmailAttachment:
+      type: object
+      properties:
+        filename:      { type: string }
+        contentType:   { type: string, description: "Domyślnie application/octet-stream" }
+        contentBase64: { type: string, description: "Zawartość pliku w base64 (NIE base64url)" }
+
+    SendMailRequest:
+      type: object
+      properties:
+        to:      { type: string, description: "Adres odbiorcy (lub lista rozdzielona przecinkami)" }
+        subject: { type: string }
+        text:    { type: string }
+        html:    { type: string }
+        from:    { type: string, description: "Nadawca (opcjonalnie)" }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/GmailAttachment" }
+      required: [to, subject]
+
+    SendMailResponse:
+      type: object
+      properties:
+        id:       { type: string }
+        threadId: { type: string }
+        labelIds:
+          type: array
+          items: { type: string }
+
+    ReplyMailRequest:
+      type: object
+      properties:
+        replyToMessageId: { type: string, description: "ID wiadomości, do której odpowiadamy (użyte do pobrania nagłówków)" }
+        threadId:         { type: string, description: "Alternatywnie — odpowiedź w podanym wątku" }
+        to:               { type: string, description: "Jeśli brak – użyjemy Reply-To/From z oryginału" }
+        subject:          { type: string, description: "Domyślnie \"Re: {Subject oryginału}\"" }
+        text:             { type: string }
+        html:             { type: string }
+        inReplyTo:        { type: string }
+        references:       { type: string }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/GmailAttachment" }
+      oneOf:
+        - required: [replyToMessageId]
+        - required: [threadId]
+
+    ReplyMailResponse:
+      type: object
+      properties:
+        id:       { type: string }
+        threadId: { type: string }
+        labelIds:
+          type: array
+          items: { type: string }
