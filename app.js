@@ -1,7 +1,7 @@
 
 // app.js — Jarvis-PL backend (ESM).
 // Features: Health, OAuth2 (Google), Calendar R/W + Watch/push, Gmail send/reply/list,
-// Drive search, Places (New) search/details, Swagger UI (/docs), Redis (Upstash) for tokens/watch state.
+// Drive search, Places (New) search/details, Redis (Upstash) for tokens/watch state.
 // No express-session. Uses global fetch (Node 20+).
 //
 // package.json deps expected:
@@ -9,9 +9,7 @@
 //  "cors": "^2.8.5",
 //  "dotenv": "^17.2.1",
 //  "googleapis": "^159.0.0",
-//  "yaml": "^2.8.1",
-//  "swagger-ui-express": "^5.0.1",
-//  "@upstash/redis": "^1.35.3"
+//  //  "@upstash/redis": "^1.35.3"
 //
 // ENV (Render / .env):
 //  BASE_URL=https://ai.aneuroasystent.pl
@@ -27,18 +25,9 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
-import YAML from 'yaml';
-import swaggerUi from 'swagger-ui-express';
 import crypto from 'crypto';
 import { Redis } from '@upstash/redis';
-
-// __dirname in ESM
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
 
 // App + middleware
 const app = express();
@@ -816,19 +805,87 @@ app.post('/gmail/reply', async (req, res) => {
 app.get('/drive/search', async (req, res) => {
   try {
     if (!ensureAuthOr401(res)) return;
-    const q = req.query.q || '';
+
     const drive = google.drive({ version: 'v3', auth: oAuth2Client });
+
+    // ── Query params ──────────────────────────────────────────────────────────
+    const nameQ        = (req.query.q || '').toString().trim();         // nazwa: name contains
+    const fullTextQ    = (req.query.fulltext || '').toString().trim();  // treść: fullText contains
+    const type         = (req.query.type || '').toString().trim().toLowerCase(); // pdf, docx, document, sheet, folder, image, video, slides, spreadsheet, xlsx
+    const owner        = (req.query.owner || '').toString().trim();     // 'me' lub adres e-mail
+    const modifiedAfter= (req.query.modifiedAfter || '').toString().trim(); // ISO, np. 2025-06-01T00:00:00Z
+    const modifiedBefore=(req.query.modifiedBefore || '').toString().trim(); // ISO
+    const pageSize     = Math.max(1, Math.min(100, parseInt(req.query.pageSize) || 20));
+
+    // ── Mapowanie typów na MIME ───────────────────────────────────────────────
+    const mimeMap = {
+      pdf:        'application/pdf',
+      doc:        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      docx:       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      document:   'application/vnd.google-apps.document',
+      sheet:      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      xlsx:       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      spreadsheet:'application/vnd.google-apps.spreadsheet',
+      slides:     'application/vnd.google-apps.presentation',
+      pptx:       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      folder:     'application/vnd.google-apps.folder',
+      image:      'image/',   // dopasujemy prefixem
+      video:      'video/',   // dopasujemy prefixem
+    };
+
+    // ── Budowa zapytania q ────────────────────────────────────────────────────
+    const filters = ["trashed = false"];
+
+    if (nameQ)      filters.push(`name contains '${nameQ.replace(/'/g, "\\'")}'`);
+    if (fullTextQ)  filters.push(`fullText contains '${fullTextQ.replace(/'/g, "\\'")}'`);
+
+    if (type) {
+      const mime = mimeMap[type];
+      if (mime) {
+        if (mime.endsWith('/')) {
+          // np. image/* lub video/* -> użyjemy contains
+          filters.push(`mimeType contains '${mime}'`);
+        } else {
+          filters.push(`mimeType = '${mime}'`);
+        }
+      } else if (type.startsWith('mime:')) {
+        // pozwala na własny MIME, np. ?type=mime:application/zip
+        filters.push(`mimeType = '${type.slice(5)}'`);
+      }
+    }
+
+    if (owner) {
+      // 'me' albo e-mail
+      const val = owner === 'me' ? 'me' : owner;
+      filters.push(`'${val.replace(/'/g, "\\'")}' in owners`);
+    }
+
+    if (modifiedAfter)  filters.push(`modifiedTime >= '${modifiedAfter}'`);
+    if (modifiedBefore) filters.push(`modifiedTime <= '${modifiedBefore}'`);
+
+    const q = filters.join(' and ');
+
+    // ── Wywołanie API ─────────────────────────────────────────────────────────
     const resp = await drive.files.list({
-      q: q ? `name contains '${q.replace(/'/g, "\\'")}'` : undefined,
-      fields: 'files(id,name,mimeType,modifiedTime)',
-      pageSize: 20,
+      q,
+      fields: 'files(id,name,mimeType,modifiedTime,owners(displayName,emailAddress),webViewLink,iconLink,size)',
+      pageSize,
+      orderBy: 'modifiedTime desc',
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true,
     });
+
     res.json(resp.data.files || []);
   } catch (e) {
     const status = e?.response?.status || 500;
-    res.status(status).json({ error: 'drive_search_failed', status, details: e?.response?.data || e?.message });
+    res.status(status).json({
+      error: 'drive_search_failed',
+      status,
+      details: e?.response?.data || e?.message
+    });
   }
 });
+
 
 // ==== Places (New) ====
 app.get('/places/search', async (req, res) => {
@@ -910,19 +967,6 @@ app.get('/places/details', async (req, res) => {
     res.status(status).json({ error: 'places_details_failed', status, details: e?.response?.data || e?.message });
   }
 });
-
-// --- Swagger UI wiring (optional; won't crash if spec missing) ---
-try {
-  const specPath = path.join(__dirname, 'openapi-public.yaml');
-  let openapiText = fs.readFileSync(specPath, 'utf8').replace(/^\uFEFF/, '');
-  const openapiDoc = YAML.parse(openapiText);
-  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiDoc));
-  app.get('/openapi-public.yaml', (_req, res) => res.type('text/yaml').send(openapiText));
-  console.log('Swagger UI: /docs  (spec: /openapi-public.yaml)');
-} catch (e) {
-  console.error('Swagger init failed:', e?.message || e);
-  app.get('/docs', (_req, res) => res.status(500).send('Swagger failed to load spec. Spec: /openapi-public.yaml'));
-}
 
 // Start server
 app.listen(PORT, () => {
