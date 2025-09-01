@@ -128,6 +128,14 @@ paths:
           schema: { type: string }
           description: "Prefiks nazwy (case-insensitive). Backend dodatkowo seeduje zapytanie do Google Drive warunkiem `name contains '<prefix>'`, a następnie filtruje wyniki ścisłym prefiksem oraz skanuje kolejne strony (prefix-aware paging), aż zbierze `pageSize` trafień. Limit skanów: 20."
         - in: query
+          name: includeShared
+          schema: { type: boolean, default: true }
+          description: "Czy uwzględniać pliki współdzielone i z Dysków współdzielonych. Gdy false — zwraca tylko pliki, których jesteś właścicielem (`'me' in owners`). Jeśli podasz równocześnie `owner=...`, to `owner` ma pierwszeństwo."
+        - in: query
+          name: ext
+          schema: { type: string }
+          description: "Lista rozszerzeń, rozdzielona przecinkami (np. `pdf,docx,zip`). Backend seeduje zapytanie Drive (`name contains '.ext'`) i dodatkowo filtruje lokalnie po nazwie (`endsWith('.ext')`, case-insensitive) dla dokładności. Uwaga: pliki Google (Docs/Sheets/Slides) nie mają rozszerzeń."
+        - in: query
           name: sort
           schema:
             type: string

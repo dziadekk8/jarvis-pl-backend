@@ -832,36 +832,39 @@ app.get('/drive/search', async (req, res) => {
     const sort = (req.query.sort || 'modified').toString().toLowerCase();           // 'modified' | 'name'
     const sortDir = (req.query.sortDir || (sort === 'modified' ? 'desc' : 'asc')).toString().toLowerCase(); // 'asc' | 'desc'
     const dirSuffix = (sortDir === 'desc') ? ' desc' : '';
-
     let orderBy = `modifiedTime${sort === 'modified' ? dirSuffix : ' desc'}`;
     if (sort === 'name') orderBy = `name${dirSuffix}`;
 
-    // ── Mapowanie typów na MIME ───────────────────────────────────────────────
+    // NOWE: includeShared + ext
+    const includeShared = !['0','false','no','n'].includes((req.query.includeShared || 'true').toString().toLowerCase());
+    const extParam = (req.query.ext || '').toString().trim();
+    const extList = extParam ? extParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
+
+    // ── Mapowanie typów na MIME (parametr "type") ────────────────────────────
     const mimeMap = {
       pdf:        'application/pdf',
-      doc:        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      doc:        'application/msword',
       docx:       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       document:   'application/vnd.google-apps.document',
       sheet:      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       xlsx:       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       spreadsheet:'application/vnd.google-apps.spreadsheet',
       slides:     'application/vnd.google-apps.presentation',
+      ppt:        'application/vnd.ms-powerpoint',
       pptx:       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       folder:     'application/vnd.google-apps.folder',
       image:      'image/',   // prefix
       video:      'video/',   // prefix
+      csv:        'text/csv',
+      txt:        'text/plain',
+      zip:        'application/zip',
     };
 
     // ── Budowa zapytania q ────────────────────────────────────────────────────
     const filters = ["trashed = false"];
+
     if (nameQ)      filters.push(`name contains '${nameQ.replace(/'/g, "\\'")}'`);
     if (fullTextQ)  filters.push(`fullText contains '${fullTextQ.replace(/'/g, "\\'")}'`);
-        // Seed pod prefiks: zawężamy po stronie Drive do nazw zawierających prefiks.
-        // Lokalnie i tak sprawdzimy startsWith(), więc semantyka "prefiksu" zostaje.
-        if (namePrefix) {
-          const npEsc = namePrefix.replace(/'/g, "\\'");
-          filters.push(`name contains '${npEsc}'`);
-        }
 
     if (type) {
       const mime = mimeMap[type];
@@ -873,6 +876,11 @@ app.get('/drive/search', async (req, res) => {
       }
     }
 
+    // includeShared=false → tylko pliki, których jesteś właścicielem (chyba że owner=…)
+    if (!includeShared && !owner) {
+      filters.push(`'me' in owners`);
+    }
+
     if (owner) {
       const val = owner === 'me' ? 'me' : owner;
       filters.push(`'${val.replace(/'/g, "\\'")}' in owners`);
@@ -881,9 +889,21 @@ app.get('/drive/search', async (req, res) => {
     if (modifiedAfter)  filters.push(`modifiedTime >= '${modifiedAfter}'`);
     if (modifiedBefore) filters.push(`modifiedTime <= '${modifiedBefore}'`);
 
+    // Seed dla namePrefix (zawężenie po stronie Google)
+    if (namePrefix) {
+      const npEsc = namePrefix.replace(/'/g, "\\'");
+      filters.push(`name contains '${npEsc}'`);
+    }
+
+    // Seed dla ext (zawężenie po stronie Google)
+    if (extList.length) {
+      const orParts = extList.slice(0, 20).map(e => `name contains '.${e.replace(/'/g, "\\'")}'`);
+      filters.push(`(${orParts.join(' or ')})`);
+    }
+
     const q = filters.join(' and ');
 
-    // ── Pobranie 1 strony ─────────────────────────────────────────────────────
+    // ── Pobranie 1 strony + filtry po stronie serwera ────────────────────────
     const fetchPage = async (pageToken) => {
       const resp = await drive.files.list({
         q,
@@ -896,14 +916,25 @@ app.get('/drive/search', async (req, res) => {
       });
 
       let files = resp.data.files || [];
+
       // Filtry po stronie serwera
       if (minSize !== null) files = files.filter(f => f.size && Number(f.size) >= minSize);
       if (maxSize !== null) files = files.filter(f => f.size && Number(f.size) <= maxSize);
-      // NOWE: prefiks nazwy (case-insensitive)
+
+      // Precyzyjny filtr po rozszerzeniu (case-insensitive, endsWith)
+      if (extList.length) {
+        files = files.filter(f => {
+          const n = (f.name || '').toLowerCase();
+          return extList.some(e => n.endsWith(`.${e}`));
+        });
+      }
+
+      // Prefiks nazwy (case-insensitive)
       if (namePrefix) {
         const pref = namePrefix.toLowerCase();
         files = files.filter(f => (f.name || '').toLowerCase().startsWith(pref));
       }
+
       return { files, nextPageToken: resp.data.nextPageToken };
     };
 
@@ -911,12 +942,17 @@ app.get('/drive/search', async (req, res) => {
     if (exportFmt === 'csv') {
       let all = [];
       let pageToken = pageTokenParam || undefined;
+      const SCAN_LIMIT = allPages ? 1000 : 1; // CSV allPages może skanować dużo stron
+      let scans = 0;
+
       do {
         const { files, nextPageToken } = await fetchPage(pageToken);
         all.push(...files);
         pageToken = allPages ? nextPageToken : undefined;
+        scans++;
         if (!pageToken) break;
         if (all.length >= maxTotal) break;
+        if (scans >= SCAN_LIMIT) break;
       } while (true);
 
       const header = ['id','name','mimeType','modifiedTime','ownerName','ownerEmail','webViewLink','size'];
@@ -950,17 +986,13 @@ app.get('/drive/search', async (req, res) => {
       let collected = [];
       let token = pageTokenParam || undefined;
       let lastToken = undefined;
-      const pref = namePrefix.toLowerCase();
 
-      // limit bezpieczeństwa — ile stron możemy przeskanować w jednym wywołaniu
       const SCAN_LIMIT = 20;
       let scans = 0;
 
       while (collected.length < pageSize && scans < SCAN_LIMIT) {
         const { files, nextPageToken } = await fetchPage(token);
-        const filtered = files.filter(f => (f.name || '').toLowerCase().startsWith(pref));
-        collected.push(...filtered);
-
+        collected.push(...files);
         if (!nextPageToken) {
           lastToken = undefined;
           break;
@@ -981,6 +1013,8 @@ app.get('/drive/search', async (req, res) => {
           namePrefix,
           sort,
           sortDir,
+          includeShared,
+          ext: extList,
           scans
         });
       }
@@ -988,11 +1022,10 @@ app.get('/drive/search', async (req, res) => {
     } else {
       const { files, nextPageToken } = await fetchPage(pageTokenParam);
       if (raw) {
-        return res.json({ files, nextPageToken, pageSize, q, orderBy, namePrefix, sort, sortDir });
+        return res.json({ files, nextPageToken, pageSize, q, orderBy, namePrefix, sort, sortDir, includeShared, ext: extList });
       }
       return res.json(files); // kontrakt jak wcześniej
     }
-
 
   } catch (e) {
     const status = e?.response?.status || 500;
@@ -1003,6 +1036,7 @@ app.get('/drive/search', async (req, res) => {
     });
   }
 });
+
 
 
 
