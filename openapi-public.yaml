@@ -9,8 +9,7 @@ info:
 servers:
   - url: https://ai.aneuroasystent.pl
     description: Production
-  - url: http://localhost:8080
-    description: Lokalny serwer deweloperski
+
 
 security: []
 
@@ -372,6 +371,99 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /gmail/labels:
+  get:
+    operationId: listGmailLabels
+    summary: Lista etykiet Gmail
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value:
+                  type: array
+                  items: { $ref: "#/components/schemas/GmailLabel" }
+                Count: { type: integer }
+      "4XX":
+        description: Błąd wejścia lub brak autoryzacji
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+/gmail/modify:
+  post:
+    operationId: modifyGmailMessage
+    summary: Dodaj/usuń etykiety na wiadomości
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ModifyMailRequest" }
+    responses:
+      "200":
+        description: Zmodyfikowano etykiety
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+      "4XX":
+        description: Błąd wejścia lub autoryzacji
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+/gmail/markAsRead:
+  post:
+    operationId: markAsRead
+    summary: Oznacz wiadomość jako PRZECZYTANĄ (usuwa UNREAD)
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              id: { type: string }
+            required: [id]
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+      "4XX":
+        description: Błąd wejścia lub autoryzacji
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+/gmail/markAsUnread:
+  post:
+    operationId: markAsUnread
+    summary: Oznacz wiadomość jako NIEPRZECZYTANĄ (dodaje UNREAD)
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              id: { type: string }
+            required: [id]
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+      "4XX":
+        description: Błąd wejścia lub autoryzacji
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ErrorResponse" }
+
 
 components:
   schemas:
@@ -389,14 +481,7 @@ components:
           description: "Dodatkowe szczegóły błędu"
           additionalProperties: true
 
-    AuthStatus:
-      type: object
-      properties:
-        loggedIn:     { type: boolean }
-        refreshToken: { type: boolean }
-        scopes:
-          type: array
-          items: { type: string }
+
 
     CreateEventRequest:
       type: object
@@ -530,23 +615,87 @@ components:
 
     ReplyMailRequest:
       type: object
+      description: Podaj replyToMessageId LUB threadId (wymagane jest jedno z nich).
       properties:
-        replyToMessageId: { type: string, description: "ID wiadomości, do której odpowiadamy (użyte do pobrania nagłówków)" }
-        threadId:         { type: string, description: "Alternatywnie — odpowiedź w podanym wątku" }
-        to:               { type: string, description: "Jeśli brak – użyjemy Reply-To/From z oryginału" }
-        subject:          { type: string, description: "Domyślnie \"Re: {Subject oryginału}\"" }
-        text:             { type: string }
-        html:             { type: string }
-        inReplyTo:        { type: string }
-        references:       { type: string }
+        replyToMessageId:
+          type: string
+          description: ID wiadomości, do której odpowiadamy (backend sam pobierze nagłówki do In-Reply-To/References)
+        threadId:
+          type: string
+          description: Alternatywnie — odpowiedź w danym wątku (bez replyToMessageId)
+        to:
+          type: string
+          description: Jeśli brak – backend użyje Reply-To/From z oryginału
+        subject:
+          type: string
+          description: 'Domyślnie "Re: {Subject oryginału}"'
+        text:
+          type: string
+          description: Treść jako plaintext (opcjonalnie)
+        html:
+          type: string
+          description: Treść jako HTML (opcjonalnie)
+        inReplyTo:
+          type: string
+          description: Wartość nagłówka In-Reply-To (Message-ID oryginału); zwykle nie trzeba podawać
+        references:
+          type: string
+          description: Wartość nagłówka References; zwykle nie trzeba podawać
         attachments:
           type: array
-          items: { $ref: "#/components/schemas/GmailAttachment" }
+          items:
+            $ref: "#/components/schemas/GmailAttachment"
       oneOf:
-        - required: [replyToMessageId]
-        - required: [threadId]
+        - type: object
+          properties:
+            replyToMessageId: { type: string }
+          required: [replyToMessageId]
+        - type: object
+          properties:
+            threadId: { type: string }
+          required: [threadId]
+      example:
+        replyToMessageId: "179af3c7b2e5c0ab"
+        to: "example@domain.com"
+        subject: "Re: Zapytanie ofertowe"
+        text: "Dziękuję za wiadomość — odpisuję w wątku."
 
     ReplyMailResponse:
+      type: object
+      properties:
+        id:       { type: string }
+        threadId: { type: string }
+        labelIds:
+          type: array
+          items: { type: string }
+    GmailLabel:
+      type: object
+      properties:
+        id:   { type: string }
+        name: { type: string }
+        type: { type: string }
+        messageListVisibility: { type: string }
+        labelListVisibility: { type: string }
+
+    ModifyMailRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          description: "ID wiadomości Gmail"
+        addLabels:
+          type: array
+          description: "Nazwy LUB ID etykiet do dodania (np. UNREAD, STARRED, 'Moja etykieta')"
+          items:
+            type: string
+        removeLabels:
+          type: array
+          description: "Nazwy LUB ID etykiet do usunięcia"
+          items:
+            type: string
+      required: [id]
+
+    ModifyMailResponse:
       type: object
       properties:
         id:       { type: string }
