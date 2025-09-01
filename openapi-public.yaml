@@ -156,14 +156,32 @@ paths:
           name: export
           schema: { type: string, enum: [csv, json], default: json }
           description: Ustaw na 'csv', aby pobrać wyniki jako plik CSV.
+        - in: query
+          name: pageToken
+          schema: { type: string }
+          description: Token kolejnej strony wyników (z poprzedniego wywołania).
+        - in: query
+          name: raw
+          schema: { type: boolean, default: false }
+          description: Jeśli true — zwróci obiekt z files i nextPageToken. Domyślnie zwraca samą tablicę plików.
+        - in: query
+          name: allPages
+          schema: { type: boolean, default: false }
+          description: Tylko dla export=csv — pobiera wszystkie strony wyników.
+        - in: query
+          name: maxTotal
+          schema: { type: integer, minimum: 1, maximum: 10000, default: 2000 }
+          description: Limit łącznej liczby plików przy allPages=1 (CSV).
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/DriveFile" }
+                anyOf:
+                  - type: array
+                    items: { $ref: "#/components/schemas/DriveFile" }
+                  - $ref: "#/components/schemas/DriveSearchResponse"
             text/csv:
               schema:
                 type: string
@@ -184,6 +202,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
 
   /gmail/send:
     post:
@@ -346,6 +365,21 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GmailAttachment"
+
+    DriveSearchResponse:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/DriveFile"
+        nextPageToken:
+          type: string
+        pageSize:
+          type: integer
+        q:
+          type: string
+        
 
     DriveFile:
       type: object

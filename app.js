@@ -805,17 +805,27 @@ app.post('/gmail/reply', async (req, res) => {
 app.get('/drive/search', async (req, res) => {
   try {
     if (!ensureAuthOr401(res)) return;
-
     const drive = google.drive({ version: 'v3', auth: oAuth2Client });
 
     // ── Query params ──────────────────────────────────────────────────────────
-    const nameQ        = (req.query.q || '').toString().trim();         // nazwa: name contains
-    const fullTextQ    = (req.query.fulltext || '').toString().trim();  // treść: fullText contains
-    const type         = (req.query.type || '').toString().trim().toLowerCase(); // pdf, docx, document, sheet, folder, image, video, slides, spreadsheet, xlsx
-    const owner        = (req.query.owner || '').toString().trim();     // 'me' lub adres e-mail
-    const modifiedAfter= (req.query.modifiedAfter || '').toString().trim(); // ISO, np. 2025-06-01T00:00:00Z
-    const modifiedBefore=(req.query.modifiedBefore || '').toString().trim(); // ISO
-    const pageSize     = Math.max(1, Math.min(100, parseInt(req.query.pageSize) || 20));
+    const nameQ         = (req.query.q || '').toString().trim();
+    const fullTextQ     = (req.query.fulltext || '').toString().trim();
+    const type          = (req.query.type || '').toString().trim().toLowerCase();
+    const owner         = (req.query.owner || '').toString().trim();
+    const modifiedAfter = (req.query.modifiedAfter || '').toString().trim();
+    const modifiedBefore= (req.query.modifiedBefore || '').toString().trim();
+    const pageSize      = Math.max(1, Math.min(100, parseInt(req.query.pageSize) || 20));
+
+    const minSize = Number.isFinite(parseInt(req.query.minSize)) ? parseInt(req.query.minSize) : null;
+    const maxSize = Number.isFinite(parseInt(req.query.maxSize)) ? parseInt(req.query.maxSize) : null;
+
+    const exportFmt = (req.query.export || '').toString().toLowerCase(); // 'csv' | 'json' | ''
+    const raw = ['1','true','yes','y'].includes((req.query.raw || '').toString().toLowerCase());
+    const pageTokenParam = (req.query.pageToken || '').toString().trim() || undefined;
+
+    // CSV: pobierz wszystkie strony?
+    const allPages = ['1','true','yes','y'].includes((req.query.allPages || '').toString().toLowerCase());
+    const maxTotal = Math.max(1, Math.min(10000, parseInt(req.query.maxTotal) || 2000)); // twarde ograniczenie
 
     // ── Mapowanie typów na MIME ───────────────────────────────────────────────
     const mimeMap = {
@@ -829,33 +839,26 @@ app.get('/drive/search', async (req, res) => {
       slides:     'application/vnd.google-apps.presentation',
       pptx:       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       folder:     'application/vnd.google-apps.folder',
-      image:      'image/',   // dopasujemy prefixem
-      video:      'video/',   // dopasujemy prefixem
+      image:      'image/',   // prefix
+      video:      'video/',   // prefix
     };
 
     // ── Budowa zapytania q ────────────────────────────────────────────────────
     const filters = ["trashed = false"];
-
     if (nameQ)      filters.push(`name contains '${nameQ.replace(/'/g, "\\'")}'`);
     if (fullTextQ)  filters.push(`fullText contains '${fullTextQ.replace(/'/g, "\\'")}'`);
 
     if (type) {
       const mime = mimeMap[type];
       if (mime) {
-        if (mime.endsWith('/')) {
-          // np. image/* lub video/* -> użyjemy contains
-          filters.push(`mimeType contains '${mime}'`);
-        } else {
-          filters.push(`mimeType = '${mime}'`);
-        }
+        if (mime.endsWith('/')) filters.push(`mimeType contains '${mime}'`);
+        else filters.push(`mimeType = '${mime}'`);
       } else if (type.startsWith('mime:')) {
-        // pozwala na własny MIME, np. ?type=mime:application/zip
         filters.push(`mimeType = '${type.slice(5)}'`);
       }
     }
 
     if (owner) {
-      // 'me' albo e-mail
       const val = owner === 'me' ? 'me' : owner;
       filters.push(`'${val.replace(/'/g, "\\'")}' in owners`);
     }
@@ -865,17 +868,69 @@ app.get('/drive/search', async (req, res) => {
 
     const q = filters.join(' and ');
 
-    // ── Wywołanie API ─────────────────────────────────────────────────────────
-    const resp = await drive.files.list({
-      q,
-      fields: 'files(id,name,mimeType,modifiedTime,owners(displayName,emailAddress),webViewLink,iconLink,size)',
-      pageSize,
-      orderBy: 'modifiedTime desc',
-      includeItemsFromAllDrives: true,
-      supportsAllDrives: true,
-    });
+    // ── Funkcja pobierająca jedną stronę ─────────────────────────────────────
+    const fetchPage = async (pageToken) => {
+      const resp = await drive.files.list({
+        q,
+        fields: 'nextPageToken, files(id,name,mimeType,modifiedTime,owners(displayName,emailAddress),webViewLink,iconLink,size)',
+        pageSize,
+        pageToken,
+        orderBy: 'modifiedTime desc',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      });
+      let files = resp.data.files || [];
+      // Filtr rozmiaru po stronie serwera
+      if (minSize !== null) files = files.filter(f => f.size && Number(f.size) >= minSize);
+      if (maxSize !== null) files = files.filter(f => f.size && Number(f.size) <= maxSize);
+      return { files, nextPageToken: resp.data.nextPageToken };
+    };
 
-    res.json(resp.data.files || []);
+    // ── CSV: allPages lub pojedyncza strona ──────────────────────────────────
+    if (exportFmt === 'csv') {
+      let all = [];
+      let pageToken = pageTokenParam || undefined;
+      do {
+        const { files, nextPageToken } = await fetchPage(pageToken);
+        all.push(...files);
+        pageToken = allPages ? nextPageToken : undefined;
+        if (!pageToken) break;
+        if (all.length >= maxTotal) break;
+      } while (true);
+
+      const header = ['id','name','mimeType','modifiedTime','ownerName','ownerEmail','webViewLink','size'];
+      const esc = (v) => {
+        if (v === null || v === undefined) return '';
+        const s = String(v).replace(/"/g, '""');
+        return `"${s}"`;
+        };
+      const rows = all.slice(0, maxTotal).map(f => {
+        const o = Array.isArray(f.owners) && f.owners[0] ? f.owners[0] : {};
+        return [
+          esc(f.id),
+          esc(f.name),
+          esc(f.mimeType),
+          esc(f.modifiedTime),
+          esc(o.displayName || ''),
+          esc(o.emailAddress || ''),
+          esc(f.webViewLink || ''),
+          esc(f.size || ''),
+        ].join(',');
+      });
+      const csv = [header.join(','), ...rows].join('\r\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="drive-search.csv"');
+      return res.send(csv);
+    }
+
+    // ── JSON: jedna strona; opcjonalnie meta w raw=1 ─────────────────────────
+    const { files, nextPageToken } = await fetchPage(pageTokenParam);
+    if (raw) {
+      return res.json({ files, nextPageToken, pageSize, q });
+    }
+    // Domyślnie – zachowujemy poprzedni kontrakt: sama tablica
+    return res.json(files);
+
   } catch (e) {
     const status = e?.response?.status || 500;
     res.status(status).json({
@@ -885,6 +940,7 @@ app.get('/drive/search', async (req, res) => {
     });
   }
 });
+
 
 
 // ==== Places (New) ====
