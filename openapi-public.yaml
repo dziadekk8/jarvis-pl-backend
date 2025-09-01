@@ -113,6 +113,7 @@ paths:
     get:
       operationId: searchDriveFiles
       summary: Szukaj plików w Google Drive
+      description: "Obsługuje paginację (pageToken/raw), eksport CSV (export=csv, allPages). Dla parametru namePrefix backend stosuje dwustopniowe zawężenie: (1) seed po stronie Google Drive: dodaje warunek name contains '<prefix>' do zapytania, (2) ścisły prefiks (case-insensitive) po stronie serwera oraz prefix-aware paging — kolejne strony są skanowane do czasu zebrania pageSize trafień (limit skanów: 20). Dzięki temu pierwsza strona wyników zawsze zawiera faktyczne dopasowania prefiksu."
       parameters:
         - in: query
           name: q
@@ -125,7 +126,7 @@ paths:
         - in: query
           name: namePrefix
           schema: { type: string }
-          description: Filtr lokalny — nazwa pliku zaczyna się od podanego prefiksu (case-insensitive).
+          description: "Prefiks nazwy (case-insensitive). Backend dodatkowo seeduje zapytanie do Google Drive warunkiem `name contains '<prefix>'`, a następnie filtruje wyniki ścisłym prefiksem oraz skanuje kolejne strony (prefix-aware paging), aż zbierze `pageSize` trafień. Limit skanów: 20."
         - in: query
           name: sort
           schema:
