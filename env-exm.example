@@ -1,0 +1,9 @@
+BASE_URL=http://localhost:8080
+GOOGLE_CLIENT_ID=YOUR_CLIENT_ID.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=YOUR_CLIENT_SECRET
+ADMIN_TOKEN=please_change_me
+WATCH_TOKEN=dev-token
+GOOGLE_MAPS_API_KEY=your_maps_api_key
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+TZ=Europe/Warsaw

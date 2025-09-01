@@ -1,7 +1,7 @@
 {
   "name": "jarvis-pl-backend",
   "version": "1.0.0",
-  "description": "Jarvis-PL backend (Calendar/Gmail/Drive/Places + Redis)",
+  "description": "Jarvis-PL backend (Calendar/Gmail/Drive/Places + Redis + Swagger UI)",
   "type": "module",
   "main": "app.js",
   "scripts": {
@@ -16,7 +16,9 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
-    "googleapis": "^159.0.0"
+    "googleapis": "^159.0.0",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.8.1"
   },
   "license": "MIT"
 }
