@@ -123,6 +123,24 @@ paths:
           schema: { type: string }
           description: Szukanie w treści pliku (fullText contains)
         - in: query
+          name: namePrefix
+          schema: { type: string }
+          description: Filtr lokalny — nazwa pliku zaczyna się od podanego prefiksu (case-insensitive).
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [modified, name]
+            default: modified
+          description: Sortowanie wyników — domyślnie po dacie modyfikacji (modified), alternatywnie po nazwie (name).
+        - in: query
+          name: sortDir
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          description: Kierunek sortowania (dla modified domyślnie desc; dla name domyślnie asc).
+        - in: query
           name: type
           schema:
             type: string

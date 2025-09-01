@@ -827,6 +827,15 @@ app.get('/drive/search', async (req, res) => {
     const allPages = ['1','true','yes','y'].includes((req.query.allPages || '').toString().toLowerCase());
     const maxTotal = Math.max(1, Math.min(10000, parseInt(req.query.maxTotal) || 2000)); // twarde ograniczenie
 
+    // NOWE: prefiks nazwy + sort
+    const namePrefix = (req.query.namePrefix || '').toString().trim();
+    const sort = (req.query.sort || 'modified').toString().toLowerCase();           // 'modified' | 'name'
+    const sortDir = (req.query.sortDir || (sort === 'modified' ? 'desc' : 'asc')).toString().toLowerCase(); // 'asc' | 'desc'
+    const dirSuffix = (sortDir === 'desc') ? ' desc' : '';
+
+    let orderBy = `modifiedTime${sort === 'modified' ? dirSuffix : ' desc'}`;
+    if (sort === 'name') orderBy = `name${dirSuffix}`;
+
     // ── Mapowanie typów na MIME ───────────────────────────────────────────────
     const mimeMap = {
       pdf:        'application/pdf',
@@ -847,6 +856,12 @@ app.get('/drive/search', async (req, res) => {
     const filters = ["trashed = false"];
     if (nameQ)      filters.push(`name contains '${nameQ.replace(/'/g, "\\'")}'`);
     if (fullTextQ)  filters.push(`fullText contains '${fullTextQ.replace(/'/g, "\\'")}'`);
+        // Seed pod prefiks: zawężamy po stronie Drive do nazw zawierających prefiks.
+        // Lokalnie i tak sprawdzimy startsWith(), więc semantyka "prefiksu" zostaje.
+        if (namePrefix) {
+          const npEsc = namePrefix.replace(/'/g, "\\'");
+          filters.push(`name contains '${npEsc}'`);
+        }
 
     if (type) {
       const mime = mimeMap[type];
@@ -868,25 +883,31 @@ app.get('/drive/search', async (req, res) => {
 
     const q = filters.join(' and ');
 
-    // ── Funkcja pobierająca jedną stronę ─────────────────────────────────────
+    // ── Pobranie 1 strony ─────────────────────────────────────────────────────
     const fetchPage = async (pageToken) => {
       const resp = await drive.files.list({
         q,
         fields: 'nextPageToken, files(id,name,mimeType,modifiedTime,owners(displayName,emailAddress),webViewLink,iconLink,size)',
         pageSize,
         pageToken,
-        orderBy: 'modifiedTime desc',
+        orderBy,
         includeItemsFromAllDrives: true,
         supportsAllDrives: true,
       });
+
       let files = resp.data.files || [];
-      // Filtr rozmiaru po stronie serwera
+      // Filtry po stronie serwera
       if (minSize !== null) files = files.filter(f => f.size && Number(f.size) >= minSize);
       if (maxSize !== null) files = files.filter(f => f.size && Number(f.size) <= maxSize);
+      // NOWE: prefiks nazwy (case-insensitive)
+      if (namePrefix) {
+        const pref = namePrefix.toLowerCase();
+        files = files.filter(f => (f.name || '').toLowerCase().startsWith(pref));
+      }
       return { files, nextPageToken: resp.data.nextPageToken };
     };
 
-    // ── CSV: allPages lub pojedyncza strona ──────────────────────────────────
+    // ── CSV ───────────────────────────────────────────────────────────────────
     if (exportFmt === 'csv') {
       let all = [];
       let pageToken = pageTokenParam || undefined;
@@ -903,7 +924,7 @@ app.get('/drive/search', async (req, res) => {
         if (v === null || v === undefined) return '';
         const s = String(v).replace(/"/g, '""');
         return `"${s}"`;
-        };
+      };
       const rows = all.slice(0, maxTotal).map(f => {
         const o = Array.isArray(f.owners) && f.owners[0] ? f.owners[0] : {};
         return [
@@ -923,13 +944,55 @@ app.get('/drive/search', async (req, res) => {
       return res.send(csv);
     }
 
-    // ── JSON: jedna strona; opcjonalnie meta w raw=1 ─────────────────────────
-    const { files, nextPageToken } = await fetchPage(pageTokenParam);
-    if (raw) {
-      return res.json({ files, nextPageToken, pageSize, q });
+    // ── JSON ──────────────────────────────────────────────────────────────────
+    // Prefix-aware paging: jeśli jest namePrefix, skanuj strony aż zbierzesz pageSize pasujących
+    if (namePrefix) {
+      let collected = [];
+      let token = pageTokenParam || undefined;
+      let lastToken = undefined;
+      const pref = namePrefix.toLowerCase();
+
+      // limit bezpieczeństwa — ile stron możemy przeskanować w jednym wywołaniu
+      const SCAN_LIMIT = 20;
+      let scans = 0;
+
+      while (collected.length < pageSize && scans < SCAN_LIMIT) {
+        const { files, nextPageToken } = await fetchPage(token);
+        const filtered = files.filter(f => (f.name || '').toLowerCase().startsWith(pref));
+        collected.push(...filtered);
+
+        if (!nextPageToken) {
+          lastToken = undefined;
+          break;
+        }
+        token = nextPageToken;
+        lastToken = nextPageToken;
+        scans++;
+      }
+
+      const slice = collected.slice(0, pageSize);
+      if (raw) {
+        return res.json({
+          files: slice,
+          nextPageToken: lastToken,
+          pageSize,
+          q,
+          orderBy,
+          namePrefix,
+          sort,
+          sortDir,
+          scans
+        });
+      }
+      return res.json(slice);
+    } else {
+      const { files, nextPageToken } = await fetchPage(pageTokenParam);
+      if (raw) {
+        return res.json({ files, nextPageToken, pageSize, q, orderBy, namePrefix, sort, sortDir });
+      }
+      return res.json(files); // kontrakt jak wcześniej
     }
-    // Domyślnie – zachowujemy poprzedni kontrakt: sama tablica
-    return res.json(files);
+
 
   } catch (e) {
     const status = e?.response?.status || 500;
@@ -940,6 +1003,7 @@ app.get('/drive/search', async (req, res) => {
     });
   }
 });
+
 
 
 
