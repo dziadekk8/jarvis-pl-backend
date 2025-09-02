@@ -1,22 +1,25 @@
-{
-  "name": "jarvis-pl-backend",
-  "version": "1.0.0",
-  "description": "Jarvis-PL backend (Calendar/Gmail/Drive/Places + Redis)",
-  "type": "module",
-  "main": "app.js",
-  "scripts": {
-    "start": "node app.js",
-    "dev": "node app.js"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "@upstash/redis": "^1.35.3",
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.1",
-    "express": "^5.1.0",
-    "googleapis": "^159.0.0"
-  },
-  "license": "MIT"
+﻿{
+    "name":  "jarvis-pl-backend",
+    "version":  "1.0.0",
+    "description":  "Jarvis-PL backend (Calendar/Gmail/Drive/Places + Redis)",
+    "type":  "module",
+    "main":  "app.js",
+    "scripts":  {
+                    "start":  "node app.js",
+                    "dev":  "node app.js",
+                    "e2e":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\e2e.ps1",
+                    "e2e:run":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\run-e2e.ps1",
+                    "e2e:auto":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\run-e2e-auto.ps1"
+                },
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "dependencies":  {
+                         "@upstash/redis":  "^1.35.3",
+                         "cors":  "^2.8.5",
+                         "dotenv":  "^17.2.1",
+                         "express":  "^5.1.0",
+                         "googleapis":  "^159.0.0"
+                     },
+    "license":  "MIT"
 }

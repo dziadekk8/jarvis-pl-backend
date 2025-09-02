@@ -1,4 +1,4 @@
-
+﻿
 // app.js — Jarvis-PL backend (ESM).
 // Features: Health, OAuth2 (Google), Calendar R/W + Watch/push, Gmail send/reply/list,
 // Drive search, Places (New) search/details, Redis (Upstash) for tokens/watch state.
@@ -238,43 +238,85 @@ app.get('/calendar/event', async (req, res) => {
   }
 });
 
-// Create event
+// === CALENDAR CREATE (akceptuje różne pola + auto-end) ===
+function fmtLocalISO(dt) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}` +
+         `T${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+}
+function addMinutesLocal(isoLocal, minutes) {
+  const d = new Date(isoLocal); // przy TZ=Europe/Warsaw w ENV będzie lokalnie
+  if (Number.isNaN(d.getTime())) return null;
+  d.setMinutes(d.getMinutes() + minutes);
+  return fmtLocalISO(d);
+}
+
 app.post('/calendar/create', async (req, res) => {
   try {
     if (!ensureAuthOr401(res)) return;
-    const {
-      summary, description, location,
-      startISO, endISO, timeZone,
-      attendeesEmails, remindersMinutes,
-      recurrence, createMeet, sendUpdates,
-    } = req.body || {};
-
     const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
-    const requestBody = {
+
+    const body = req.body || {};
+    const summary     = body.summary || '(bez tytułu)';
+    const description = body.description || '';
+    const location    = body.location || '';
+    const tz          = body.timeZone || TZ || 'Europe/Warsaw';
+
+    // akceptujemy różne aliasy pól
+    const startISO = body.startISO || body.start || null;
+    let   endISO   = body.endISO   || body.end   || null;
+
+    // jeśli brak end — domyślnie +30 min
+    let startStr = startISO;
+    if (!startStr) {
+      // domyślny start za 5 minut
+      const d = new Date();
+      d.setMinutes(d.getMinutes() + 5);
+      startStr = fmtLocalISO(d);
+    }
+    if (!endISO) {
+      endISO = addMinutesLocal(startStr, 30);
+    }
+
+    if (!endISO) {
+      return res.status(400).json({ error: 'missing_end', status: 400, details: 'Brakuje endISO/end (nie udało się wyliczyć).' });
+    }
+
+    const event = {
       summary,
       description,
       location,
-      ...makeEventTimes({ startISO, endISO, timeZone }),
-      attendees: mapAttendees(attendeesEmails),
-      recurrence,
-      reminders: typeof remindersMinutes === 'number'
-        ? { useDefault: false, overrides: [{ method: 'popup', minutes: remindersMinutes }] }
-        : undefined,
-      conferenceData: makeConference(createMeet),
+      start: { dateTime: startStr, timeZone: tz },
+      end:   { dateTime: endISO,   timeZone: tz },
+      reminders: body.remindersOverride
+        ? { useDefault: false, overrides: body.remindersOverride }
+        : undefined
     };
 
-    const resp = await calendar.events.insert({
+    if (body.createMeet) {
+      event.conferenceData = {
+        createRequest: { requestId: 'jarvis-' + Date.now() }
+      };
+    }
+
+    const { data } = await calendar.events.insert({
       calendarId: 'primary',
-      requestBody,
-      conferenceDataVersion: requestBody.conferenceData ? 1 : 0,
-      sendUpdates: sendUpdates || 'none',
+      requestBody: event,
+      conferenceDataVersion: body.createMeet ? 1 : 0
     });
-    res.json(resp.data || {});
+
+    return res.json(data);
   } catch (e) {
+    console.error('calendar_create_failed', e);
     const status = e?.response?.status || 500;
-    res.status(status).json({ error: 'calendar_create_failed', status, details: e?.response?.data });
+    return res.status(status).json({
+      error: 'calendar_create_failed',
+      status,
+      details: e?.response?.data || e?.message || String(e)
+    });
   }
 });
+
 
 // Update (patch)
 app.post('/calendar/update', async (req, res) => {
@@ -685,95 +727,6 @@ function buildMime({ to, from, subject, text, html, attachments }) {
 }
 
 // List messages (simple)
-// =============== GMAIL: szczegóły pojedynczej wiadomości ===============
-app.get('/gmail/message', async (req, res) => {
-  try {
-    if (!ensureAuthOr401(res)) return;
-    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-
-    const id = (req.query.id || '').toString().trim();
-    const raw = ['1','true','yes','y'].includes((req.query.raw || '').toString().toLowerCase());
-    if (!id) {
-      return res.status(400).json({ error: 'missing_id', status: 400, details: 'Parametr ?id= jest wymagany.' });
-    }
-
-    // ⬇⬇⬇ KLUCZOWA ZMIANA: poprawna maska pól (headers(name,value), zagnieżdżone parts(...)) ⬇⬇⬇
-    const msg = await gmail.users.messages.get({
-      userId: 'me',
-      id,
-      format: 'full',
-      fields: 'id,threadId,labelIds,internalDate,sizeEstimate,snippet,payload(partId,filename,mimeType,headers(name,value),body(size,data,attachmentId),parts(partId,filename,mimeType,headers(name,value),body(size,data,attachmentId),parts))'
-    });
-
-    const payload = msg.data.payload || {};
-    const headers = Array.isArray(payload.headers) ? payload.headers : [];
-
-    const h = (name) => {
-      const x = headers.find(h => (h.name || '').toLowerCase() === name.toLowerCase());
-      return x ? (x.value || '') : '';
-    };
-
-    let dateISO = '';
-    try { const rawDate = h('Date'); if (rawDate) dateISO = new Date(rawDate).toISOString(); } catch {}
-
-    const attachments = [];
-    let htmlParts = [];
-    let textParts = [];
-
-    const decodeB64 = (b64url) => {
-      try { return Buffer.from((b64url||'').replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8'); }
-      catch { return ''; }
-    };
-
-    const walk = (part) => {
-      if (!part) return;
-      const mime = part.mimeType || '';
-      const body = part.body || {};
-      const data = body.data || '';
-      const filename = part.filename || '';
-
-      if (mime.toLowerCase() === 'text/html' && data) htmlParts.push(decodeB64(data));
-      else if (mime.toLowerCase() === 'text/plain' && data) textParts.push(decodeB64(data));
-
-      if (filename && body.attachmentId) {
-        attachments.push({
-          filename,
-          mimeType: mime || 'application/octet-stream',
-          size: body.size || 0,
-          attachmentId: body.attachmentId,
-          partId: part.partId || ''
-        });
-      }
-      if (Array.isArray(part.parts)) part.parts.forEach(walk);
-    };
-
-    walk(payload);
-
-    const result = {
-      id: msg.data.id,
-      threadId: msg.data.threadId,
-      subject: h('Subject'),
-      from: h('From'),
-      to: h('To'),
-      date: dateISO,
-      snippet: msg.data.snippet || '',
-      headers: headers.reduce((acc, it) => { if (it && it.name) acc[it.name] = it.value || ''; return acc; }, {}),
-      body: { html: htmlParts.join('\n'), text: textParts.join('\n') },
-      attachments
-    };
-
-    if (raw) result.rawMessage = msg.data;
-
-    return res.json(result);
-  } catch (e) {
-    const status = e?.response?.status || 500;
-    res.status(status).json({
-      error: 'gmail_message_failed',
-      status,
-      details: e?.response?.data || e?.message
-    });
-  }
-});
 
 // == HELPER: mapuj nazwy/ID etykiet na ID (Gmail API modify wymaga ID) ==
 async function mapLabelNamesToIds(gmail, labels) {
@@ -788,22 +741,125 @@ async function mapLabelNamesToIds(gmail, labels) {
 }
 
 
-// Send email
+// === SEND MAIL (spójna odpowiedź + elastyczne załączniki) ===
+function toBase64Url(b64) {
+  return (b64 || '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function wrap76(str) {
+  return (str || '').replace(/.{1,76}/g, '$&\r\n');
+}
+
 app.post('/gmail/send', async (req, res) => {
   try {
     if (!ensureAuthOr401(res)) return;
-    const { to, from, subject, text, html, attachments } = req.body || {};
-    if (!to || !subject) return res.status(400).json({ error: 'missing_to_or_subject' });
     const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-    const mime = buildMime({ to, from, subject, text, html, attachments });
-    const raw = base64url(mime);
-    const send = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
-    res.json({ id: send.data.id, labelIds: send.data.labelIds });
+
+    const {
+      to, cc, bcc,
+      subject = '(no subject)',
+      text = '',
+      html = '',
+      attachments = []
+    } = req.body || {};
+
+    if (!to) {
+      return res.status(400).json({ error: 'missing_to', status: 400, details: 'Pole "to" jest wymagane.' });
+    }
+
+    // Zbuduj MIME: multipart/mixed (+ ewentualnie multipart/alternative dla text+html)
+    const mixedBoundary = 'mixed-' + crypto.randomUUID();
+    const altBoundary   = 'alt-' + crypto.randomUUID();
+
+    const headers = [
+      `To: ${to}`,
+      cc ? `Cc: ${cc}` : null,
+      bcc ? `Bcc: ${bcc}` : null,
+      `Subject: ${subject}`,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`
+    ].filter(Boolean).join('\r\n');
+
+    let parts = [];
+
+    // Część treści (text/html)
+    if (html && text) {
+      parts.push(
+        `--${mixedBoundary}\r\n` +
+        `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n` +
+
+        `--${altBoundary}\r\n` +
+        `Content-Type: text/plain; charset="UTF-8"\r\n` +
+        `Content-Transfer-Encoding: 7bit\r\n\r\n` +
+        `${text}\r\n\r\n` +
+
+        `--${altBoundary}\r\n` +
+        `Content-Type: text/html; charset="UTF-8"\r\n` +
+        `Content-Transfer-Encoding: 7bit\r\n\r\n` +
+        `${html}\r\n\r\n` +
+
+        `--${altBoundary}--\r\n`
+      );
+    } else if (html) {
+      parts.push(
+        `--${mixedBoundary}\r\n` +
+        `Content-Type: text/html; charset="UTF-8"\r\n` +
+        `Content-Transfer-Encoding: 7bit\r\n\r\n` +
+        `${html}\r\n\r\n`
+      );
+    } else {
+      parts.push(
+        `--${mixedBoundary}\r\n` +
+        `Content-Type: text/plain; charset="UTF-8"\r\n` +
+        `Content-Transfer-Encoding: 7bit\r\n\r\n` +
+        `${text}\r\n\r\n`
+      );
+    }
+
+    // Załączniki (obsługa mimeType/contentType i contentBase64/data)
+    for (const att of (attachments || [])) {
+      const filename = (att?.filename || 'attachment').toString().replace(/[\\\/\r\n\t\0]/g, '_');
+      const mime     = att?.mimeType || att?.contentType || 'application/octet-stream';
+      let   b64      = att?.contentBase64 || att?.data || '';
+
+      // Jeżeli ktoś podał w base64url — zamień + dodaj łamanie linii do czytelności
+      b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+      const b64Wrapped = wrap76(b64);
+
+      parts.push(
+        `--${mixedBoundary}\r\n` +
+        `Content-Type: ${mime}; name="${filename}"\r\n` +
+        `Content-Disposition: attachment; filename="${filename}"\r\n` +
+        `Content-Transfer-Encoding: base64\r\n\r\n` +
+        `${b64Wrapped}\r\n`
+      );
+    }
+
+    const mimeMsg = headers + '\r\n\r\n' + parts.join('') + `--${mixedBoundary}--\r\n`;
+    const raw = toBase64Url(Buffer.from(mimeMsg, 'utf8').toString('base64'));
+
+    const { data } = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: { raw }
+    });
+
+    // Spójna, „łatwa do asercji” odpowiedź
+    return res.json({
+      ok: true,
+      id: data.id || null,
+      threadId: data.threadId || null,
+      message: data
+    });
   } catch (e) {
+    console.error('gmail_send_failed', e);
     const status = e?.response?.status || 500;
-    res.status(status).json({ error: 'gmail_send_failed', status, details: e?.response?.data || e?.message });
+    return res.status(status).json({
+      error: 'gmail_send_failed',
+      status,
+      details: e?.response?.data || e?.message || String(e)
+    });
   }
 });
+
 
 
 
@@ -963,6 +1019,198 @@ app.post('/gmail/modify', async (req, res) => {
     });
   }
 });
+
+// === Agent Command (NLU-lite) ================================================
+app.post('/agent/command', async (req, res) => {
+  try {
+    const raw = (req.body && req.body.text ? String(req.body.text) : '').trim();
+    if (!raw) return res.status(400).json({ error: 'missing_text', status: 400, details: 'Body { text } jest wymagane.' });
+
+    // Pomocnicze
+    const BASE = process.env.BASE_URL || `http://localhost:${process.env.PORT || 8080}`;
+    const say = (msg) => ({ ok: true, say: msg });
+
+    // Normalizacja (do dopasowań) — ale zachowamy oryginalny tekst do odpowiedzi
+    const txt = raw.toLowerCase();
+
+    // ---------------- Gmail: read/unread/star ----------------
+    // Przykłady:
+    //  - "oznacz mail 19907541ef45f5c5 jako nieprzeczytany"
+    //  - "oznacz wiadomość 19907541ef45f5c5 jako przeczytany"
+    //  - "oznacz mail 19907541ef45f5c5 jako gwiazdkę"
+    //  - "odgwiazdkuj mail 19907541ef45f5c5"
+    {
+      const m = raw.match(/(?:oznacz|ustaw|odgwiazdkuj)\s+(?:mail|wiadomość)\s+([0-9A-Za-z]+)(?:\s+.*?\s+(nieprzeczytan(?:y|a)|przeczytan(?:y|a)|gwiazdk(?:ę|a)))?/i);
+      if (m) {
+        const id = m[1];
+        const mode = (m[2] || '').toLowerCase();
+
+        // Odgwiazdkowanie bez słowa "jako"
+        if (txt.includes('odgwiazdkuj')) {
+          const resp = await fetch(`${BASE}/gmail/modify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, removeLabels: ['STARRED'] })
+          }).then(r => r.json());
+          return res.json({
+            action: 'gmail.modify',
+            request: { id, removeLabels: ['STARRED'] },
+            result: resp,
+            say: `Zdjęto gwiazdkę z maila ${id}.`
+          });
+        }
+
+        if (mode.includes('nieprzeczytan')) {
+          const resp = await fetch(`${BASE}/gmail/markAsUnread`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+          }).then(r => r.json());
+          return res.json({
+            action: 'gmail.markAsUnread',
+            request: { id },
+            result: resp,
+            say: `Oznaczono mail ${id} jako nieprzeczytany.`
+          });
+        }
+
+        if (mode.includes('przeczytan')) {
+          const resp = await fetch(`${BASE}/gmail/markAsRead`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+          }).then(r => r.json());
+          return res.json({
+            action: 'gmail.markAsRead',
+            request: { id },
+            result: resp,
+            say: `Oznaczono mail ${id} jako przeczytany.`
+          });
+        }
+
+        if (mode.includes('gwiazdk')) {
+          const resp = await fetch(`${BASE}/gmail/modify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, addLabels: ['STARRED'] })
+          }).then(r => r.json());
+          return res.json({
+            action: 'gmail.modify',
+            request: { id, addLabels: ['STARRED'] },
+            result: resp,
+            say: `Dodano gwiazdkę do maila ${id}.`
+          });
+        }
+
+        // Jeśli nie rozpoznaliśmy wariantu:
+        return res.status(400).json({ error: 'unsupported_mail_command', status: 400, details: { text: raw } });
+      }
+    }
+
+    // ---------------- Drive: search (type + prefix + limit) ----------------
+    // Przykłady:
+    //  - "znajdź na drive pdf z prefiksem Faktura, limit 5"
+    //  - "znajdź na drive dokumenty z prefiksem Umowa"
+    {
+      if (txt.includes('znajdź') && txt.includes('drive')) {
+        // rozpoznaj typ
+        let type = '';
+        if (txt.includes('pdf')) type = 'pdf';
+        else if (txt.includes('dokument')) type = 'doc';
+        else if (txt.includes('arkusz') || txt.includes('sheet')) type = 'sheet';
+        else if (txt.includes('prezentac')) type = 'slide';
+
+        // prefiks
+        let namePrefix = '';
+        const pm = raw.match(/(?:prefiks(?:em)?|prefix|zaczyna się od)\s+([^\s,]+)/i);
+        if (pm) namePrefix = pm[1];
+
+        // limit
+        let pageSize = 10;
+        const lm = raw.match(/limit\s*[:=]?\s*(\d{1,3})/i);
+        if (lm) pageSize = Math.max(1, Math.min(100, parseInt(lm[1], 10)));
+
+        const qs = new URLSearchParams();
+        qs.set('pageSize', String(pageSize));
+        if (namePrefix) qs.set('namePrefix', namePrefix);
+        if (type) qs.set('type', type);
+
+        const resp = await fetch(`${BASE}/drive/search?${qs.toString()}`)
+          .then(r => r.json());
+
+        return res.json({
+          action: 'drive.search',
+          request: Object.fromEntries(qs.entries()),
+          result: resp,
+          say: `Znalazłem ${resp?.Count ?? (resp?.value?.length ?? 0)} wyników${namePrefix ? ` dla prefiksu "${namePrefix}"` : ''}${type ? ` (typ: ${type})` : ''}.`
+        });
+      }
+    }
+
+    // ---------------- Calendar: move event by ID + time (+ opcjonalnie data) ----------------
+    // Przykłady:
+    //  - "przełóż wydarzenie id:abc123 na 16:30 dzisiaj"
+    //  - "przełóż wydarzenie id=abc123 na 09:00 jutro"
+    //  - "przełóż wydarzenie id abc123 na 13:15 2025-09-02"
+    {
+      const m = raw.match(/prze[łl][óo]ż\s+wydarzen\w*\s+id[:=]?\s*([A-Za-z0-9_\-]+)\s+na\s+(\d{1,2}:\d{2})(?:\s+(dzisiaj|jutro|\d{4}-\d{2}-\d{2}))?/i);
+      if (m) {
+        const id = m[1];
+        const hm = m[2]; // HH:MM
+        const dayToken = (m[3] || '').toLowerCase();
+
+        // Wyznacz YYYY-MM-DD
+        const now = new Date();
+        // TZ masz ustawione w .env (TZ=Europe/Warsaw), więc Date będzie lokalny
+        const pad = (n) => (n < 10 ? '0' + n : '' + n);
+
+        let y = now.getFullYear(), mo = now.getMonth() + 1, d = now.getDate();
+        if (dayToken === 'jutro') {
+          const t = new Date(now.getTime() + 24*60*60*1000);
+          y = t.getFullYear(); mo = t.getMonth() + 1; d = t.getDate();
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(dayToken)) {
+          // YYYY-MM-DD
+          const [Y, M, D] = dayToken.split('-').map(s => parseInt(s, 10));
+          y = Y; mo = M; d = D;
+        }
+        const datePart = `${y}-${pad(mo)}-${pad(d)}`;
+
+        // Domyślna długość 30 min
+        const [H, M] = hm.split(':').map(s => parseInt(s, 10));
+        const startISO = `${datePart}T${pad(H)}:${pad(M)}`;
+        const endDate = new Date(y, mo - 1, d, H, M + 30, 0, 0);
+        const endISO = `${datePart}T${pad(endDate.getHours())}:${pad(endDate.getMinutes())}`;
+
+        const body = {
+          id,
+          startISO,
+          endISO,
+          timeZone: 'Europe/Warsaw'
+        };
+
+        const resp = await fetch(`${BASE}/calendar/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }).then(r => r.json());
+
+        return res.json({
+          action: 'calendar.update',
+          request: body,
+          result: resp,
+          say: `Przełożono wydarzenie ${id} na ${hm} (${datePart}).`
+        });
+      }
+    }
+
+    // Nic nie pasowało
+    return res.status(400).json({ error: 'unrecognized_command', status: 400, details: { text: raw } });
+  } catch (e) {
+    console.error('agent.command error', e);
+    return res.status(500).json({ error: 'agent_command_failed', status: 500, details: String(e?.message || e) });
+  }
+});
+
 
 // POST /gmail/markAsRead — usuń UNREAD
 app.post('/gmail/markAsRead', async (req, res) => {
@@ -1521,230 +1769,97 @@ app.get('/gmail/messages', async (req, res) => {
     });
   }
 });
-// =============== GMAIL: szczegóły pojedynczej wiadomości ===============
-app.get('/gmail/message', async (req, res) => {
-  try {
-    if (!ensureAuthOr401(res)) return;
-    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
-    const id = (req.query.id || '').toString().trim();
-    const raw = ['1','true','yes','y'].includes((req.query.raw || '').toString().toLowerCase());
-    if (!id) {
-      return res.status(400).json({ error: 'missing_id', status: 400, details: 'Parametr ?id= jest wymagany.' });
-    }
-
-    // ✅ poprawna maska pól (headers(name,value), zagnieżdżone parts(...))
-    const msg = await gmail.users.messages.get({
-      userId: 'me',
-      id,
-      format: 'full',
-      fields: 'id,threadId,labelIds,internalDate,sizeEstimate,snippet,payload(partId,filename,mimeType,headers(name,value),body(size,data,attachmentId),parts(partId,filename,mimeType,headers(name,value),body(size,data,attachmentId),parts))'
-    });
-
-    const payload = msg.data.payload || {};
-    const headers = Array.isArray(payload.headers) ? payload.headers : [];
-    const h = (name) => {
-      const x = headers.find(h => (h.name || '').toLowerCase() === name.toLowerCase());
-      return x ? (x.value || '') : '';
-    };
-
-    let dateISO = '';
-    try { const rawDate = h('Date'); if (rawDate) dateISO = new Date(rawDate).toISOString(); } catch {}
-
-    const attachments = [];
-    let htmlParts = [];
-    let textParts = [];
-    const decodeB64 = (b64url) => {
-      try { return Buffer.from((b64url||'').replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8'); }
-      catch { return ''; }
-    };
-    const walk = (part) => {
-      if (!part) return;
-      const mime = part.mimeType || '';
-      const body = part.body || {};
-      const data = body.data || '';
-      const filename = part.filename || '';
-
-      if (mime.toLowerCase() === 'text/html' && data) htmlParts.push(decodeB64(data));
-      else if (mime.toLowerCase() === 'text/plain' && data) textParts.push(decodeB64(data));
-
-      if (filename && body.attachmentId) {
-        attachments.push({
-          filename,
-          mimeType: mime || 'application/octet-stream',
-          size: body.size || 0,
-          attachmentId: body.attachmentId,
-          partId: part.partId || ''
-        });
-      }
-      if (Array.isArray(part.parts)) part.parts.forEach(walk);
-    };
-    walk(payload);
-
-    const result = {
-      id: msg.data.id,
-      threadId: msg.data.threadId,
-      subject: h('Subject'),
-      from: h('From'),
-      to: h('To'),
-      date: dateISO,
-      snippet: msg.data.snippet || '',
-      headers: headers.reduce((acc, it) => { if (it && it.name) acc[it.name] = it.value || ''; return acc; }, {}),
-      body: { html: htmlParts.join('\n'), text: textParts.join('\n') },
-      attachments
-    };
-    if (raw) result.rawMessage = msg.data;
-
-    return res.json(result);
-  } catch (e) {
-    const status = e?.response?.status || 500;
-    res.status(status).json({ error: 'gmail_message_failed', status, details: e?.response?.data || e?.message });
-  }
-});
-
-// =============== GMAIL: szczegóły pojedynczej wiadomości ===============
-app.get('/gmail/message', async (req, res) => {
-  try {
-    if (!ensureAuthOr401(res)) return;
-    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-
-    const id = (req.query.id || '').toString().trim();
-    const raw = ['1','true','yes','y'].includes((req.query.raw || '').toString().toLowerCase());
-    if (!id) {
-      return res.status(400).json({ error: 'missing_id', status: 400, details: 'Parametr ?id= jest wymagany.' });
-    }
-
-    const msg = await gmail.users.messages.get({
-      userId: 'me',
-      id,
-      format: 'full',
-      fields: 'id,threadId,labelIds,internalDate,sizeEstimate,snippet,payload(partId,mimeType,filename,headers,name,value,body(size,data,attachmentId),parts)'
-    });
-
-    const payload = msg.data.payload || {};
-    const headers = Array.isArray(payload.headers) ? payload.headers : [];
-    const h = (name) => {
-      const x = headers.find(h => (h.name || '').toLowerCase() === name.toLowerCase());
-      return x ? (x.value || '') : '';
-    };
-
-    let dateISO = '';
-    try { const rawDate = h('Date'); if (rawDate) dateISO = new Date(rawDate).toISOString(); } catch {}
-
-    const attachments = [];
-    let htmlParts = [];
-    let textParts = [];
-    const decodeB64 = (b64url) => {
-      try { return Buffer.from((b64url||'').replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8'); }
-      catch { return ''; }
-    };
-    const walk = (part) => {
-      if (!part) return;
-      const mime = part.mimeType || '';
-      const body = part.body || {};
-      const data = body.data || '';
-      const filename = part.filename || '';
-
-      if (mime.toLowerCase() === 'text/html' && data) htmlParts.push(decodeB64(data));
-      else if (mime.toLowerCase() === 'text/plain' && data) textParts.push(decodeB64(data));
-
-      if (filename && body.attachmentId) {
-        attachments.push({
-          filename,
-          mimeType: mime || 'application/octet-stream',
-          size: body.size || 0,
-          attachmentId: body.attachmentId,
-          partId: part.partId || ''
-        });
-      }
-      if (Array.isArray(part.parts)) part.parts.forEach(walk);
-    };
-    walk(payload);
-
-    const result = {
-      id: msg.data.id,
-      threadId: msg.data.threadId,
-      subject: h('Subject'),
-      from: h('From'),
-      to: h('To'),
-      date: dateISO,
-      snippet: msg.data.snippet || '',
-      headers: headers.reduce((acc, it) => { if (it && it.name) acc[it.name] = it.value || ''; return acc; }, {}),
-      body: { html: htmlParts.join('\n'), text: textParts.join('\n') },
-      attachments
-    };
-    if (raw) result.rawMessage = msg.data;
-
-    return res.json(result);
-  } catch (e) {
-    const status = e?.response?.status || 500;
-    res.status(status).json({ error: 'gmail_message_failed', status, details: e?.response?.data || e?.message });
-  }
-});
-
-// =============== GMAIL: pobieranie załącznika po attachmentId ===============
-app.get('/gmail/attachment', async (req, res) => {
-  try {
-    if (!ensureAuthOr401(res)) return;
-    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-
-    const messageId = (req.query.messageId || '').toString().trim();
-    const attachmentId = (req.query.attachmentId || '').toString().trim();
-    const filename = (req.query.filename || 'attachment.bin').toString().trim();
-    const disposition = ((req.query.disposition || 'attachment').toString().toLowerCase() === 'inline') ? 'inline' : 'attachment';
-    const contentType = (req.query.contentType || 'application/octet-stream').toString().trim();
-
-    if (!messageId || !attachmentId) {
-      return res.status(400).json({ error: 'missing_params', status: 400, details: 'Wymagane: messageId i attachmentId.' });
-    }
-
-    const att = await gmail.users.messages.attachments.get({
-      userId: 'me',
-      messageId,
-      id: attachmentId,
-      fields: 'data,size'
-    });
-
-    const b64url = att.data?.data || '';
-    if (!b64url) {
-      return res.status(404).json({ error: 'not_found', status: 404, details: 'Załącznik nie zawiera danych.' });
-    }
-
-    const buffer = Buffer.from(b64url.replace(/-/g,'+').replace(/_/g,'/'), 'base64');
-
-    // --- SANITYZACJA NAZWY PLIKU (Windows/Mac/Linux) + RFC5987 ---
-    function sanitizeFilename(name) {
-      const fallback = 'attachment.bin';
-      if (!name || typeof name !== 'string') return fallback;
-      const cleaned = name
-        .replace(/[\\/:*?"<>|]/g, '-')    // niedozwolone w Windows
-        .replace(/[\u0000-\u001F]/g, '')  // kontrolne
-        .replace(/\s+/g, ' ')
-        .trim();
-      return cleaned || fallback;
-    }
-    function encodeRFC5987(value) {
-      return encodeURIComponent(value)
-        .replace(/'/g, '%27')
-        .replace(/\*/g, '%2A')
-        .replace(/%20/g, '%20');
-    }
-
-    const fnSafe = sanitizeFilename(filename);
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', buffer.length);
-    res.setHeader(
-      'Content-Disposition',
-      `${disposition}; filename="${fnSafe}"; filename*=UTF-8''${encodeRFC5987(fnSafe)}`
-    );
-    return res.send(buffer);
-  } catch (e) {
-    const status = e?.response?.status || 500;
-    res.status(status).json({ error: 'gmail_attachment_failed', status, details: e?.response?.data || e?.message });
-  }
-});
+    
 
 // =============== GMAIL: helpery MIME ===============
+// === Helper: mapuj Gmail Message -> szczegóły (z treścią i załącznikami) ===
+function mapGmailMessageDetails(m) {
+  // Nagłówki wiadomości
+  const headers = {};
+  (m?.payload?.headers || []).forEach(h => { headers[h.name] = h.value; });
+  const H = (name) => headers[name] || '';
+
+  // Data ISO
+  let dateISO = '';
+  try {
+    if (H('Date')) dateISO = new Date(H('Date')).toISOString();
+    else if (m.internalDate) dateISO = new Date(Number(m.internalDate)).toISOString();
+  } catch {}
+
+  const attachments = [];
+  let htmlParts = [];
+  let textParts = [];
+
+  const decodeB64 = (b64url) => {
+    try {
+      return Buffer.from((b64url || '').replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
+    } catch {
+      return '';
+    }
+  };
+
+  // Pomocniczo: wyciąg nagłówków z partu
+  const partHeadersObj = (part) => {
+    const obj = {};
+    (part?.headers || []).forEach(x => { obj[x.name] = x.value; });
+    return obj;
+  };
+
+  const walk = (part) => {
+    if (!part) return;
+    const mime      = part.mimeType || '';
+    const body      = part.body || {};
+    const data      = body.data || '';
+    const filename  = part.filename || '';
+
+    const PH           = partHeadersObj(part);
+    const contentIdRaw = PH['Content-Id'] || '';
+    const contentId    = contentIdRaw.replace(/[<>]/g, ''); // usuwamy <...>
+    const disposition  = PH['Content-Disposition'] || '';
+    const isInline     = /inline/i.test(disposition) || !!contentId;
+
+    // Treść
+    if (/^text\/html/i.test(mime) && data)  htmlParts.push(decodeB64(data));
+    if (/^text\/plain/i.test(mime) && data) textParts.push(decodeB64(data));
+
+    // Załączniki (w tym inline)
+    if (body.attachmentId || filename || isInline) {
+      attachments.push({
+        filename:     filename || (PH['Name'] || ''),
+        mimeType:     mime,
+        size:         body.size || 0,
+        attachmentId: body.attachmentId,
+        partId:       part.partId,
+        contentId,
+        disposition,
+        isInline
+      });
+    }
+
+    (part.parts || []).forEach(walk);
+  };
+
+  walk(m?.payload);
+
+  return {
+    id:       m.id,
+    threadId: m.threadId,
+    subject:  H('Subject') || '',
+    from:     H('From') || '',
+    to:       H('To') || '',
+    date:     dateISO,
+    snippet:  m.snippet,
+    headers, // pełne nagłówki wiadomości
+    body: {
+      html: htmlParts.join('\n'),
+      text: textParts.join('\n')
+    },
+    attachments
+  };
+}
+
+
 function base64Url(bufferOrString) {
   const b = Buffer.isBuffer(bufferOrString) ? bufferOrString : Buffer.from(bufferOrString, 'utf8');
   return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -1927,43 +2042,83 @@ app.post('/gmail/send', async (req, res) => {
 
 
 // =============== GMAIL: pobieranie załącznika po attachmentId ===============
+// --- HELPERY (bez zależności zewnętrznych) ---
+function toStdBase64(b64url) {
+  let s = (b64url || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad) s += '='.repeat(4 - pad);
+  return s;
+}
+function safeFilename(name) {
+  const n = (name || 'attachment').toString();
+  return n.replace(/[\\\/\r\n\t\0]/g, '_');
+}
+// ---------------------------------------------
+
 app.get('/gmail/attachment', async (req, res) => {
   try {
     if (!ensureAuthOr401(res)) return;
     const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
-    const messageId = (req.query.messageId || '').toString().trim();
-    const attachmentId = (req.query.attachmentId || '').toString().trim();
-    const filename = (req.query.filename || 'attachment.bin').toString().trim();
-    const disposition = ((req.query.disposition || 'attachment').toString().toLowerCase() === 'inline') ? 'inline' : 'attachment';
-    const contentType = (req.query.contentType || 'application/octet-stream').toString().trim();
+    const messageId   = (req.query.messageId || '').toString().trim();
+    const attachmentId= (req.query.attachmentId || '').toString().trim();
+    const stream      = ['1','true','yes','y'].includes((req.query.stream || '').toString().toLowerCase());
+    const filenameQ   = (req.query.filename || '').toString().trim();
+    const mimeQ       = (req.query.mimeType || req.query.contentType || '').toString().trim();
 
-    if (!messageId || !attachmentId) {
-      return res.status(400).json({ error: 'missing_params', status: 400, details: 'Wymagane: messageId i attachmentId.' });
-    }
+    if (!messageId)   return res.status(400).json({ error:'missing_messageId', status:400, details:'Parametr ?messageId= jest wymagany.' });
+    if (!attachmentId)return res.status(400).json({ error:'missing_attachmentId', status:400, details:'Parametr ?attachmentId= jest wymagany.' });
 
+    // 1) Dociągnij zawartość (Gmail zwraca tu base64url)
     const att = await gmail.users.messages.attachments.get({
       userId: 'me',
       messageId,
-      id: attachmentId,
-      fields: 'data,size'
+      id: attachmentId
     });
-
-    const b64url = att.data?.data || '';
+    const b64url = att?.data?.data || '';
     if (!b64url) {
-      return res.status(404).json({ error: 'not_found', status: 404, details: 'Załącznik nie zawiera danych.' });
+      return res.status(404).json({ error:'attachment_not_found', status:404, details:'Brak danych załącznika (data pusty).' });
     }
 
-    const buffer = Buffer.from(b64url.replace(/-/g,'+').replace(/_/g,'/'), 'base64');
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', buffer.length);
-    res.setHeader('Content-Disposition', `${disposition}; filename="${filename.replace(/"/g, '')}"`);
-    return res.send(buffer);
+    // 2) Zamień base64url -> zwykłe base64 (+ padding)
+    const contentBase64 = toStdBase64(b64url);
+
+    // 3) Ustal typ i nazwę pliku (jeśli nie znamy: sensowne defaulty)
+    const contentType = mimeQ || 'application/octet-stream';
+    const filename    = safeFilename(filenameQ || 'attachment');
+
+    if (stream) {
+      // --- STRUMIEŃ BINARNY ---
+      const buf = Buffer.from(contentBase64, 'base64');
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', String(buf.length));
+      return res.end(buf);
+    } else {
+      // --- JSON (z kontrolą rozmiaru) ---
+      const MAX_JSON_BYTES = parseInt(process.env.ATTACHMENT_JSON_MAX || '7000000', 10); // ~7 MB
+      // szacowany rozmiar bajtów (działa dokładnie, bo mamy już base64 z paddingiem)
+      const estimatedBytes = Math.floor(contentBase64.length * 3 / 4) - (contentBase64.endsWith('==') ? 2 : contentBase64.endsWith('=') ? 1 : 0);
+      if (estimatedBytes > MAX_JSON_BYTES) {
+        return res.status(413).json({
+          error: 'attachment_too_large',
+          status: 413,
+          details: { estimatedBytes, limit: MAX_JSON_BYTES }
+        });
+      }
+      return res.json({
+        filename,
+        contentType,
+        contentBase64
+      });
+    }
   } catch (e) {
+    console.error('gmail_attachment_failed', e);
     const status = e?.response?.status || 500;
-    res.status(status).json({ error: 'gmail_attachment_failed', status, details: e?.response?.data || e?.message });
+    return res.status(status).json({ error:'gmail_attachment_failed', status, details: e?.response?.data || e?.message || String(e) });
   }
 });
+
 
 
 // Start server
@@ -1972,3 +2127,182 @@ app.listen(PORT, () => {
     console.log(`Serwer działa na http://localhost:${PORT}`);
   }
 });
+
+//
+// === Gmail: get message (KANONICZNY) ===
+
+
+//
+// === Gmail: GET /gmail/message (kanoniczny) ===
+app.get('/gmail/message', async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
+    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+
+    const id  = (req.query.id || '').toString().trim();
+    const raw = ['1','true','yes','y'].includes((req.query.raw || '').toString().toLowerCase());
+    if (!id) {
+      return res.status(400).json({ error: 'missing_id', status: 400, details: 'Parametr ?id= jest wymagany.' });
+    }
+
+    // Pobierz pełne body + parts + nagłówki
+    const msg = await gmail.users.messages.get({
+      userId: 'me',
+      id,
+      format: 'full',
+      fields:
+        "id,threadId,labelIds,internalDate,sizeEstimate,snippet," +
+        "payload(partId,filename,mimeType,headers(name,value)," +
+        "body(size,data,attachmentId)," +
+        "parts(partId,filename,mimeType,headers(name,value),body(size,data,attachmentId),parts))"
+    });
+
+    const payload = msg.data.payload || {};
+    const headers = Array.isArray(payload.headers) ? payload.headers : [];
+
+    const h = (name) => {
+      const x = headers.find(h => (h.name || '').toLowerCase() === name.toLowerCase());
+      return x ? (x.value || '') : '';
+    };
+
+    let dateISO = '';
+    try {
+      const rawDate = h('Date');
+      if (rawDate) dateISO = new Date(rawDate).toISOString();
+      else if (msg.data.internalDate) dateISO = new Date(Number(msg.data.internalDate)).toISOString();
+    } catch {}
+
+    const decodeB64 = (b64url) => {
+      try { return Buffer.from((b64url||'').replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8'); }
+      catch { return ''; }
+    };
+
+    // Lokalny helper — nie wymaga globalnej definicji
+    const partHeadersObj = (part) => {
+      const obj = {};
+      (part?.headers || []).forEach(ph => { if (ph?.name) obj[ph.name] = ph.value || ''; });
+      return obj;
+    };
+
+    const attachments = [];
+    let htmlParts = [];
+    let textParts = [];
+
+    const walk = (part) => {
+      if (!part) return;
+      const mime     = part.mimeType || '';
+      const body     = part.body || {};
+      const data     = body.data || '';
+      const filename = part.filename || '';
+
+      const PH           = partHeadersObj(part);
+      const contentIdRaw = PH['Content-Id'] || '';
+      const contentId    = contentIdRaw.replace(/[<>]/g, '');
+      const disposition  = PH['Content-Disposition'] || '';
+      const isInline     = /inline/i.test(disposition) || !!contentId;
+
+      if (/^text\/html/i.test(mime) && data)  htmlParts.push(decodeB64(data));
+      if (/^text\/plain/i.test(mime) && data) textParts.push(decodeB64(data));
+
+      if (body.attachmentId || filename || isInline) {
+        attachments.push({
+          filename:     filename || (PH['Name'] || ''),
+          mimeType:     mime,
+          size:         body.size || 0,
+          attachmentId: body.attachmentId,
+          partId:       part.partId,
+          contentId,
+          disposition,
+          isInline
+        });
+      }
+
+      (part.parts || []).forEach(walk);
+    };
+
+    walk(payload);
+
+    const result = {
+      id:       msg.data.id,
+      threadId: msg.data.threadId,
+      subject:  h('Subject') || '',
+      from:     h('From')    || '',
+      to:       h('To')      || '',
+      date:     dateISO,
+      snippet:  msg.data.snippet || '',
+      headers:  headers.reduce((acc, it) => { if (it && it.name) acc[it.name] = it.value || ''; return acc; }, {}),
+      body:     { html: htmlParts.join('\n'), text: textParts.join('\n') },
+      attachments
+    };
+
+    if (raw) result.rawMessage = msg.data;
+    return res.json(result);
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    res.status(status).json({
+      error: 'gmail_message_failed',
+      status,
+      details: e?.response?.data || e?.message
+    });
+  }
+});
+
+
+// === Gmail: thread (lekki podgląd) ===
+app.get('/gmail/thread', async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
+    const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
+
+    const threadId = (req.query.threadId || '').toString().trim();
+    const raw    = ['1','true','yes','y'].includes((req.query.raw || '').toString().toLowerCase());
+    const expand = ['1','true','yes','y'].includes((req.query.expand || '').toString().toLowerCase());
+
+    if (!threadId) {
+      return res.status(400).json({ error: 'missing_threadId', status: 400, details: 'Parametr ?threadId= jest wymagany.' });
+    }
+
+    // używamy 'metadata' (wystarczy do smoke-testu)
+    const thr = await gmail.users.threads.get({
+      userId: 'me',
+      id: threadId,
+      format: 'metadata',
+      metadataHeaders: ['Subject', 'From', 'To', 'Date']
+    });
+
+    const gmMessages = Array.isArray(thr?.data?.messages) ? thr.data.messages : [];
+
+    const mapMeta = (m) => {
+      const H = {};
+      (m?.payload?.headers || []).forEach(x => { H[x.name] = x.value; });
+      let dateIso;
+      try {
+        if (H['Date']) dateIso = new Date(H['Date']).toISOString();
+        else if (m.internalDate) dateIso = new Date(Number(m.internalDate)).toISOString();
+      } catch {}
+      return {
+        id: m.id,
+        threadId: m.threadId,
+        subject: H['Subject'] || '',
+        from: H['From'] || '',
+        to: H['To'] || '',
+        date: dateIso,
+        snippet: m.snippet
+      };
+    };
+
+    const messages = gmMessages.map(mapMeta);
+    const out = { id: thr?.data?.id || threadId, messages, count: messages.length };
+
+    return raw ? res.json(out) : res.json(out.messages);
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    console.error('gmail_thread_failed', e);
+    return res.status(status).json({
+      error: 'gmail_thread_failed',
+      status,
+      details: e?.response?.data || e?.message || String(e)
+    });
+  }
+});
+

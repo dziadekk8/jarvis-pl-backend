@@ -1,7 +1,7 @@
 ﻿openapi: 3.0.3
 info:
-  title: Jarvis-PL API (Public for GPT Actions)
-  version: "1.3.0"
+  title: Jarvis-PL API
+  version: "1.2.0"
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -9,9 +9,10 @@ info:
 servers:
   - url: https://ai.aneuroasystent.pl
     description: Production
+  - url: http://localhost:8080
+    description: Lokalny serwer deweloperski
 
-
-security: []
+security: []            # <= ROOT-level, bez wcięcia
 
 paths:
   /:
@@ -23,22 +24,26 @@ paths:
           description: OK
           content:
             text/plain:
-              schema: { type: string }
+              schema:
+                type: string
         "4XX":
           description: Błąd zapytania
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "5XX":
           description: Błąd serwera
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /health:
     get:
       operationId: health
-      summary: Health check
+      summary: Status serwera
+      security: []   # publiczny
       responses:
         "200":
           description: OK
@@ -47,17 +52,59 @@ paths:
               schema:
                 type: object
                 properties:
-                  ok: { type: boolean }
-        "4XX":
-          description: Błąd zapytania
+                  ok:
+                    type: boolean
+        "400":
+          description: Błąd ogólny
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "5XX":
-          description: Błąd serwera
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  
+  /auth/status:
+    get:
+      operationId: authStatus
+      summary: Status autoryzacji Google
+      security: []   # publiczny
+      responses:
+        "200":
+          description: 'Tekstowy status (refresh_token: TAK/NIE)'
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          description: Błąd ogólny
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /auth/reset:
+    get:
+      operationId: authReset
+      summary: Wymusza reset sesji OAuth (admin)
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          description: Zresetowano
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Brak/niepoprawny x-admin-token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Błąd ogólny
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /oauth2/start:
     get:
@@ -266,55 +313,164 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /gmail/thread:
+    get:
+      operationId: getGmailThread
+      summary: Pobierz wątek Gmail (expand=0 lekko, expand=1 pełne treści; raw=1 zwraca kształt API-friendly)
+      parameters:
+        - in: query
+          name: threadId
+          required: true
+          schema: { type: string }
+          description: ID wątku (Gmail)
+        - in: query
+          name: expand
+          required: false
+          schema: { type: boolean }
+          description: Gdy true/1 — pełne treści i załączniki (wolniej, ale kompletnie)
+        - in: query
+          name: raw
+          required: false
+          schema: { type: boolean }
+          description: Gdy true/1 — zwraca obiekt { id, messages[], count }; gdy false — zwraca samą tablicę messages[]
+      responses:
+        "200":
+          description: Zwraca obiekt (raw=1) albo tablicę wiadomości (domyślnie)
+          content:
+            application/json:
+              examples:
+                listMeta:
+                  summary: Tablica z lekkimi danymi (expand=0)
+                  value:
+                    - id: "1990bbbd766d94ae"
+                      threadId: "1990bbbd766d94ae"
+                      subject: "Przykładowy temat"
+                      from: "Nadawca <nadawca@example.com>"
+                      to: "Odbiorca <odbiorca@example.com>"
+                      date: "2025-09-02T10:05:03.000Z"
+                      snippet: "skrót treści…"
+                listFull:
+                  summary: Obiekt z pełnymi danymi (raw=1, expand=1)
+                  value:
+                    id: "1990bbbd766d94ae"
+                    count: 1
+                    messages:
+                      - id: "1990bbbd766d94ae"
+                        threadId: "1990bbbd766d94ae"
+                        subject: "Przykładowy temat"
+                        from: "Nadawca <nadawca@example.com>"
+                        to: "Odbiorca <odbiorca@example.com>"
+                        date: "2025-09-02T10:05:03.000Z"
+                        snippet: "skrót treści…"
+                        headers:
+                          Date: "Tue, 02 Sep 2025 10:05:03 +0000"
+                          From: "Nadawca <nadawca@example.com>"
+                          To: "Odbiorca <odbiorca@example.com>"
+                          Subject: "Przykładowy temat"
+                        body:
+                          html: "<p>Treść HTML…</p>"
+                          text: "Treść tekstowa…"
+                        attachments:
+                          - filename: "plik.pdf"
+                            mimeType: "application/pdf"
+                            size: 123456
+                            attachmentId: "ANGjdJ..."
+                            partId: "2"
+                            isInline: false
+        "400":
+          description: Brak lub błędne parametry (`missing_threadId` itp.)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Brak autoryzacji
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500":
+          description: Błąd serwera (`gmail_thread_failed`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   /gmail/attachment:
     get:
       operationId: getGmailAttachment
-      summary: Pobierz binarną zawartość załącznika
+      summary: Pobierz załącznik Gmail (binarnie lub JSON)
+      description: >
+        Dla `stream=1` zwraca plik binarnie (`application/octet-stream`)
+        z nagłówkiem `Content-Disposition`. Bez `stream` zwraca JSON
+        z metadanymi i danymi base64 (`data`).
+      # Skopiuj taki sam blok security jak przy /gmail/messages, a jeśli nie chcesz teraz ruszać — zostaw publicznie:
+      security: []
       parameters:
         - in: query
           name: messageId
           required: true
           schema: { type: string }
-          description: ID wiadomości (messageId)
+          description: ID wiadomości (Gmail)
         - in: query
           name: attachmentId
           required: true
           schema: { type: string }
-          description: ID załącznika (attachmentId z /gmail/message)
+          description: ID załącznika (Gmail)
         - in: query
-          name: filename
-          schema: { type: string }
-          description: Sugerowana nazwa pliku (Content-Disposition filename)
-        - in: query
-          name: disposition
-          schema:
-            type: string
-            enum: [attachment, inline]
-            default: attachment
-          description: attachment (pobieranie) lub inline (podgląd)
-        - in: query
-          name: contentType
-          schema: { type: string }
-          description: Domyślnie application/octet-stream
+          name: stream
+          required: false
+          schema: { type: boolean, default: false }
+          description: true = strumień binarny (download)
       responses:
         "200":
-          description: OK (binarny strumień)
+          description: OK
+          headers:
+            Content-Disposition:
+              description: 'attachment; filename="<nazwa pliku>"'
+              schema:
+                type: string
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
-        "4XX":
-          description: Błąd zapytania / uprawnień
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GmailAttachmentData"
+              examples:
+                jsonInline:
+                  summary: JSON z danymi base64 (bez stream)
+                  value:
+                    filename: "film.mp4"
+                    mimeType: "video/mp4"
+                    size: 8875479
+                    data: "BASE64…"
+        "400":
+          description: Brak lub błędne parametry (`missing_messageId`, `missing_attachmentId`)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "5XX":
-          description: Błąd serwera / Gmail
+        "401":
+          description: Brak autoryzacji
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Nie znaleziono (`attachment_not_found`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "413":
+          description: Załącznik zbyt duży dla trybu JSON (`attachment_too_large`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500":
+          description: Błąd serwera (`gmail_attachment_failed`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }          
+
+
+
 
   /gmail/send:
     post:
@@ -371,117 +527,187 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /agent/command:
+    post:
+      operationId: agentCommand
+      summary: Prosty parser komend tekstowych (NLU-lite)
+      description: |
+        Rozpoznaje proste komendy w języku polskim i wywołuje istniejące endpointy:
+        - Gmail: oznaczanie maila (read/unread/star/unst ar)
+        - Drive: wyszukiwanie z typem i prefiksem
+        - Calendar: przełożenie wydarzenia po ID na nową godzinę (opcjonalnie data)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentCommandRequest"
+            examples:
+              mailUnread:
+                value: { text: "oznacz mail 19907541ef45f5c5 jako nieprzeczytany" }
+              drivePdf:
+                value: { text: "znajdź na drive pdf z prefiksem Faktura, limit 5" }
+              calMove:
+                value: { text: "przełóż wydarzenie id:abc123 na 16:30 jutro" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentCommandResponse"
+        "4XX":
+          description: Błąd walidacji / nie rozpoznano
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /gmail/labels:
-  get:
-    operationId: listGmailLabels
-    summary: Lista etykiet Gmail
-    responses:
-      "200":
-        description: OK
+    get:
+      operationId: listGmailLabels
+      summary: Lista etykiet Gmail
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GmailLabel" }
+        "4XX":
+          description: Błąd żądania
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /gmail/modify:
+    post:
+      operationId: modifyGmailMessage
+      summary: Dodaj/usuń etykiety w wiadomości
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModifyMailRequest" }
+      responses:
+        "200":
+          description: Zmieniono etykiety
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+        "4XX":
+          description: Błąd żądania
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /gmail/markAsRead:
+    post:
+      operationId: markAsRead
+      summary: Oznacz jako przeczytane
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
               properties:
-                value:
-                  type: array
-                  items: { $ref: "#/components/schemas/GmailLabel" }
-                Count: { type: integer }
-      "4XX":
-        description: Błąd wejścia lub brak autoryzacji
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ErrorResponse" }
+                id: { type: string, description: "ID wiadomości" }
+              required: [id]
+      responses:
+        "200":
+          description: Zmieniono etykiety
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+        "4XX":
+          description: Błąd żądania
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
-/gmail/modify:
-  post:
-    operationId: modifyGmailMessage
-    summary: Dodaj/usuń etykiety na wiadomości
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/ModifyMailRequest" }
-    responses:
-      "200":
-        description: Zmodyfikowano etykiety
+  /gmail/markAsUnread:
+    post:
+      operationId: markAsUnread
+      summary: Oznacz jako nieprzeczytane
+      requestBody:
+        required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ModifyMailResponse" }
-      "4XX":
-        description: Błąd wejścia lub autoryzacji
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ErrorResponse" }
-
-/gmail/markAsRead:
-  post:
-    operationId: markAsRead
-    summary: Oznacz wiadomość jako PRZECZYTANĄ (usuwa UNREAD)
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              id: { type: string }
-            required: [id]
-    responses:
-      "200":
-        description: OK
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ModifyMailResponse" }
-      "4XX":
-        description: Błąd wejścia lub autoryzacji
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ErrorResponse" }
-
-/gmail/markAsUnread:
-  post:
-    operationId: markAsUnread
-    summary: Oznacz wiadomość jako NIEPRZECZYTANĄ (dodaje UNREAD)
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              id: { type: string }
-            required: [id]
-    responses:
-      "200":
-        description: OK
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ModifyMailResponse" }
-      "4XX":
-        description: Błąd wejścia lub autoryzacji
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ErrorResponse" }
+            schema:
+              type: object
+              properties:
+                id: { type: string, description: "ID wiadomości" }
+              required: [id]
+      responses:
+        "200":
+          description: Zmieniono etykiety
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+        "4XX":
+          description: Błąd żądania
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
 
 components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: x-admin-token
+      description: Wymagany nagłówek administracyjny do /auth/reset
   schemas:
     ErrorResponse:
+    type: object
+    properties:
+      error:
+        type: string
+        description: Krótki kod błędu (np. gmail_thread_failed)
+      status:
+        type: integer
+        description: HTTP status (np. 400/401/500)
+      details:
+        description: Dodatkowe informacje (tekst/obiekt/tablica)
+        oneOf:
+          - type: string
+          - type: object
+          - type: array
+    required: [error, status]
+    GmailMessageMeta:
       type: object
+      required: [id, threadId]
       properties:
-        error:
-          type: string
-          description: "Krótki kod/typ błędu (np. drive_search_failed)"
-        status:
-          type: integer
-          description: "HTTP status związany z błędem"
-        details:
-          type: object
-          description: "Dodatkowe szczegóły błędu"
-          additionalProperties: true
-
-
+        id:        { type: string }
+        threadId:  { type: string }
+        subject:   { type: string }
+        from:      { type: string }
+        to:        { type: string }
+        date:      { type: string, format: date-time, nullable: true }
+        snippet:   { type: string }
 
     CreateEventRequest:
       type: object
@@ -575,15 +801,24 @@ components:
           type: array
           items: { $ref: "#/components/schemas/GmailAttachmentMeta" }
 
-    GmailAttachmentMeta:
+    GmailThreadResponse:
       type: object
       properties:
-        filename:     { type: string }
-        mimeType:     { type: string }
-        size:         { type: integer }
-        attachmentId: { type: string }
-        partId:       { type: string }
+        id:      { type: string, description: "ID wątku" }
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/GmailMessageDetails" }
+        count:  { type: integer, description: "Liczba wiadomości w wątku" }
 
+    GmailAttachmentMeta:
+      filename:     { type: string }
+      mimeType:     { type: string }
+      size:         { type: integer }
+      attachmentId: { type: string, nullable: true }
+      partId:       { type: string, nullable: true }
+      isInline:     { type: boolean, nullable: true }
+      contentId:    { type: string, nullable: true }
+      disposition:  { type: string, nullable: true }
     GmailAttachment:
       type: object
       properties:
@@ -663,19 +898,28 @@ components:
     ReplyMailResponse:
       type: object
       properties:
-        id:       { type: string }
-        threadId: { type: string }
+        id:
+          type: string
+        threadId:
+          type: string
         labelIds:
           type: array
-          items: { type: string }
+          items:
+            type: string
+
     GmailLabel:
       type: object
       properties:
-        id:   { type: string }
-        name: { type: string }
-        type: { type: string }
-        messageListVisibility: { type: string }
-        labelListVisibility: { type: string }
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        messageListVisibility:
+          type: string
+        labelListVisibility:
+          type: string
 
     ModifyMailRequest:
       type: object
@@ -693,13 +937,63 @@ components:
           description: "Nazwy LUB ID etykiet do usunięcia"
           items:
             type: string
-      required: [id]
+      required:
+        - id
 
     ModifyMailResponse:
       type: object
       properties:
-        id:       { type: string }
-        threadId: { type: string }
+        id:
+          type: string
+        threadId:
+          type: string
         labelIds:
           type: array
-          items: { type: string }
+          items:
+            type: string
+
+    AgentCommandRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          description: "Komenda w języku polskim"
+      required:
+        - text
+
+    AgentCommandResponse:
+      type: object
+      properties:
+        action:
+          type: string
+          description: "Jaką akcję wykonano (gmail.modify/drive.search/calendar.update/...)"
+        request:
+          type: object
+          additionalProperties: true
+        result:
+          type: object
+          additionalProperties: true
+        say:
+          type: string
+          description: "Krótki komunikat dla użytkownika"
+
+    GmailThreadResponseRaw:
+      type: object
+      properties:
+        id:        { type: string, description: "ID wątku" }
+        count:     { type: integer, format: int32, description: "Liczba wiadomości" }
+        messages:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/GmailMessageDetails"
+              - $ref: "#/components/schemas/GmailMessageListItem"
+
+    GmailAttachmentData:
+      type: object
+      properties:
+        filename:   { type: string }
+        mimeType:   { type: string }
+        size:       { type: integer, format: int64 }
+        data:       { type: string, description: "Base64 (standard), zawartość pliku" }
+      required: [ filename, mimeType, size, data ]      
