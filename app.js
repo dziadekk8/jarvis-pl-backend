@@ -35,13 +35,47 @@ app.use(cors());
 app.use(express.json({ limit: '20mb' })); // handle attachments
 app.use(express.urlencoded({ extended: true }));
 
+// Zaufaj proxy (Render/Ingress) aby odczytać X-Forwarded-Proto
+app.set('trust proxy', true);
+
+// Wymuś HTTPS i kanoniczny host w produkcji
+const IS_PROD = /^https:\/\//i.test(BASE_URL);
+
+app.use((req, res, next) => {
+  if (!IS_PROD) return next(); // lokalnie nic nie wymuszaj
+
+  const host  = req.headers.host;
+  const proto = req.headers['x-forwarded-proto'] || req.protocol;
+
+  // 1) HTTPS
+  if (proto !== 'https') {
+    const url = `https://${CANONICAL_HOST || host}${req.originalUrl}`;
+    return res.redirect(301, url);
+  }
+
+  // 2) Kanoniczny host
+  if (CANONICAL_HOST && host !== CANONICAL_HOST) {
+    const url = `https://${CANONICAL_HOST}${req.originalUrl}`;
+    return res.redirect(301, url);
+  }
+
+  next();
+});
+
 // Config
-const PORT         = process.env.PORT || 8080;
-const BASE_URL     = process.env.BASE_URL || `http://localhost:${PORT}`;
-const TZ           = process.env.TZ || 'Europe/Warsaw';
-const ADMIN_TOKEN  = process.env.ADMIN_TOKEN || '';
-const WATCH_TOKEN  = process.env.WATCH_TOKEN || '';
-const MAPS_KEY     = process.env.GOOGLE_MAPS_API_KEY || '';
+const PORT = process.env.PORT || 8080;
+
+// Bazowy publiczny URL backendu (np. https://ai.aneuroasystent.pl)
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+// Kanoniczny host (bez protokołu) – jeśli nie podasz, weź host z BASE_URL
+const CANONICAL_HOST = process.env.CANONICAL_HOST || new URL(BASE_URL).host;
+
+const TZ          = process.env.TZ || 'Europe/Warsaw';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const WATCH_TOKEN = process.env.WATCH_TOKEN || '';
+const MAPS_KEY    = process.env.GOOGLE_MAPS_API_KEY || '';
+
 
 console.log(`✅ Serwer startuje: ${BASE_URL}`);
 console.log(`DEBUG REDIRECT_URI = ${new URL('/oauth2/callback', BASE_URL).toString()}`);
