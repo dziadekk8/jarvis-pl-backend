@@ -474,7 +474,7 @@ components:
             - type: string
             - type: object
             - type: array
-            - items: {}
+              items: {}
       required: [error, status]
 
     GmailAttachmentMeta:
