@@ -5,11 +5,13 @@
     "type":  "module",
     "main":  "app.js",
     "scripts":  {
-                    "start":  "node app.js",
                     "dev":  "node app.js",
                     "e2e":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\e2e.ps1",
+                    "e2e:auto":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\run-e2e-auto.ps1",
+                    "e2e:local":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\e2e.ps1 -Base http://localhost:8080",
+                    "e2e:prod":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\e2e.ps1 -Base https://ai.aneuroasystent.pl",
                     "e2e:run":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\run-e2e.ps1",
-                    "e2e:auto":  "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\run-e2e-auto.ps1"
+                    "start":  "node app.js"
                 },
     "engines":  {
                     "node":  "\u003e=20"

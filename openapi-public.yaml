@@ -1,7 +1,9 @@
-﻿openapi: 3.0.3
+openapi: 3.0.3
 info:
   title: Jarvis-PL API
-  version: "1.2.0"
+  version: "1.0.0"
+  description: |
+    Publiczna specyfikacja API do akcji Jarvis-PL (Gmail/Drive/Calendar).
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -12,20 +14,25 @@ servers:
   - url: http://localhost:8080
     description: Lokalny serwer deweloperski
 
-security: []            # <= ROOT-level, bez wcięcia
+security:
+  - {}
 
 paths:
-  /:
+  /health:
     get:
-      operationId: root
-      summary: Prosty test żywotności (tekst "OK")
+      operationId: health
+      summary: Status serwera
       responses:
         "200":
           description: OK
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
         "4XX":
           description: Błąd zapytania
           content:
@@ -39,226 +46,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /health:
-    get:
-      operationId: health
-      summary: Status serwera
-      security: []   # publiczny
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-        "400":
-          description: Błąd ogólny
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  
-  /auth/status:
-    get:
-      operationId: authStatus
-      summary: Status autoryzacji Google
-      security: []   # publiczny
-      responses:
-        "200":
-          description: 'Tekstowy status (refresh_token: TAK/NIE)'
-          content:
-            text/plain:
-              schema:
-                type: string
-        "400":
-          description: Błąd ogólny
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /auth/reset:
-    get:
-      operationId: authReset
-      summary: Wymusza reset sesji OAuth (admin)
-      security:
-        - AdminToken: []
-      responses:
-        "200":
-          description: Zresetowano
-          content:
-            text/plain:
-              schema:
-                type: string
-        "401":
-          description: Brak/niepoprawny x-admin-token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "400":
-          description: Błąd ogólny
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /oauth2/start:
-    get:
-      operationId: oauth2Start
-      summary: Rozpocznij autoryzację OAuth2 (Google)
-      description: Zwraca przekierowanie do ekranu zgody Google (w praktyce 302). Dla lintera zwracamy 200.
-      responses:
-        "200":
-          description: OK (opis informacyjny dla lintera; w praktyce endpoint robi 302)
-          content:
-            text/plain:
-              schema: { type: string }
-        "4XX":
-          description: Błąd danych / uprawnień
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "5XX":
-          description: Błąd serwera
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-
-  /calendar/create:
-    post:
-      operationId: createCalendarEvent
-      summary: Tworzy wydarzenie w kalendarzu (primary) — opcjonalnie z Google Meet
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CreateEventRequest" }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CreateEventResponse" }
-        "4XX":
-          description: Błąd danych / uprawnień
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "5XX":
-          description: Błąd serwera / Calendar
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-
-  /drive/search:
-    get:
-      operationId: searchDriveFiles
-      summary: Szukaj plików w Google Drive
-      description: Obsługuje paginację, sortowanie i filtrowanie po prefiksie nazwy oraz MIME.
-      parameters:
-        - in: query
-          name: q
-          schema: { type: string }
-          description: Własne zapytanie Drive (np. trashed = false).
-        - in: query
-          name: type
-          schema: { type: string }
-          description: Np. pdf, docx, xlsx lub pełny MIME (mime:application/pdf).
-        - in: query
-          name: namePrefix
-          schema: { type: string }
-          description: Filtruj pliki, których nazwa zaczyna się od tej frazy (case-insensitive).
-        - in: query
-          name: sort
-          schema:
-            type: string
-            enum: [name, modified]
-            default: modified
-          description: Sortuj po nazwie lub dacie modyfikacji.
-        - in: query
-          name: sortDir
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: asc
-          description: Kierunek sortowania.
-        - in: query
-          name: pageSize
-          schema: { type: integer, minimum: 1, maximum: 100 }
-          description: Liczba elementów na stronę (domyślnie 10).
-        - in: query
-          name: pageToken
-          schema: { type: string }
-          description: Token kolejnej strony z poprzedniej odpowiedzi.
-        - in: query
-          name: raw
-          schema: { type: boolean }
-          description: Gdy true/1 – zwróci surową odpowiedź Google (klucz `files` + `nextPageToken`).
-        - in: query
-          name: export
-          schema:
-            type: string
-            enum: [csv]
-          description: Jeśli `csv`, zwróci CSV zamiast JSON.
-        - in: query
-          name: allPages
-          schema: { type: boolean }
-          description: Gdy true/1 – pobierze wszystkie strony aż do `maxTotal`.
-        - in: query
-          name: maxTotal
-          schema: { type: integer }
-          description: Limit łącznej liczby plików przy allPages=1 (CSV).
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DriveSearchResponse"
-            text/csv:
-              schema:
-                type: string
-                description: CSV z kolumnami id,name,mimeType,modifiedTime,ownerName,ownerEmail,webViewLink,size
-        "4XX":
-          description: Błąd zapytania / uprawnień
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "5XX":
-          description: Błąd serwera
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-
   /gmail/messages:
     get:
-      operationId: listGmailMessages
-      summary: Pobierz listę wiadomości Gmail (ostatnie/filtr)
+      operationId: gmailMessagesList
+      summary: Lista wiadomości (opcjonalnie filtrowana zapytaniem Gmail)
       parameters:
-        - in: query
-          name: q
-          schema: { type: string }
-          description: Zapytanie Gmail, np. newer_than:7d subject:"faktura" has:attachment
         - in: query
           name: pageSize
           schema: { type: integer, minimum: 1, maximum: 100 }
-          description: Domyślnie 10
-        - in: query
-          name: pageToken
-          schema: { type: string }
-          description: Token do kolejnej strony
         - in: query
           name: expand
-          schema: { type: boolean }
-          description: Gdy true/1 – zwróci więcej pól (subject, from, date) w liście
+          description: 1 = więcej pól w liście
+          schema: { type: integer, enum: [0,1], default: 0 }
         - in: query
           name: raw
-          schema: { type: boolean }
-          description: Gdy true/1 – dołączy surową odpowiedź Google
+          description: Zwracaj pola surowe/techniczne
+          schema: { type: integer, enum: [0,1], default: 0 }
+        - in: query
+          name: q
+          description: Zapytanie jak w Gmailu (np. newer_than:7d, is:unread, from:...)
+          schema: { type: string }
       responses:
         "200":
           description: OK
@@ -270,9 +77,10 @@ paths:
                   messages:
                     type: array
                     items:
-                      $ref: "#/components/schemas/GmailMessageListItem"
+                      $ref: "#/components/schemas/GmailMessageMeta"
+                required: [messages]
         "4XX":
-          description: Błąd zapytania / uprawnień
+          description: Błąd zapytania
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -284,18 +92,13 @@ paths:
 
   /gmail/message:
     get:
-      operationId: getGmailMessage
-      summary: Szczegóły pojedynczej wiadomości (body + załączniki)
+      operationId: gmailMessageGet
+      summary: Szczegóły pojedynczej wiadomości (treść, nagłówki, załączniki)
       parameters:
         - in: query
           name: id
           required: true
           schema: { type: string }
-          description: ID wiadomości Gmail
-        - in: query
-          name: raw
-          schema: { type: boolean }
-          description: Gdy true/1 – dołączy surową odpowiedź Google
       responses:
         "200":
           description: OK
@@ -304,7 +107,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GmailMessageDetails"
         "4XX":
-          description: Błąd zapytania / uprawnień
+          description: Brak lub błędne parametry
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -313,184 +116,77 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /gmail/thread:
     get:
-      operationId: getGmailThread
-      summary: Pobierz wątek Gmail (expand=0 lekko, expand=1 pełne treści; raw=1 zwraca kształt API-friendly)
+      operationId: gmailThreadGet
+      summary: Dane wątku (messages) lub RAW (zależnie od parametrów)
       parameters:
         - in: query
           name: threadId
           required: true
           schema: { type: string }
-          description: ID wątku (Gmail)
         - in: query
           name: expand
-          required: false
-          schema: { type: boolean }
-          description: Gdy true/1 — pełne treści i załączniki (wolniej, ale kompletnie)
+          schema: { type: integer, enum: [0,1], default: 0 }
         - in: query
           name: raw
-          required: false
-          schema: { type: boolean }
-          description: Gdy true/1 — zwraca obiekt { id, messages[], count }; gdy false — zwraca samą tablicę messages[]
+          schema: { type: integer, enum: [0,1], default: 0 }
       responses:
         "200":
-          description: Zwraca obiekt (raw=1) albo tablicę wiadomości (domyślnie)
+          description: OK
           content:
             application/json:
-              examples:
-                listMeta:
-                  summary: Tablica z lekkimi danymi (expand=0)
-                  value:
-                    - id: "1990bbbd766d94ae"
-                      threadId: "1990bbbd766d94ae"
-                      subject: "Przykładowy temat"
-                      from: "Nadawca <nadawca@example.com>"
-                      to: "Odbiorca <odbiorca@example.com>"
-                      date: "2025-09-02T10:05:03.000Z"
-                      snippet: "skrót treści…"
-                listFull:
-                  summary: Obiekt z pełnymi danymi (raw=1, expand=1)
-                  value:
-                    id: "1990bbbd766d94ae"
-                    count: 1
-                    messages:
-                      - id: "1990bbbd766d94ae"
-                        threadId: "1990bbbd766d94ae"
-                        subject: "Przykładowy temat"
-                        from: "Nadawca <nadawca@example.com>"
-                        to: "Odbiorca <odbiorca@example.com>"
-                        date: "2025-09-02T10:05:03.000Z"
-                        snippet: "skrót treści…"
-                        headers:
-                          Date: "Tue, 02 Sep 2025 10:05:03 +0000"
-                          From: "Nadawca <nadawca@example.com>"
-                          To: "Odbiorca <odbiorca@example.com>"
-                          Subject: "Przykładowy temat"
-                        body:
-                          html: "<p>Treść HTML…</p>"
-                          text: "Treść tekstowa…"
-                        attachments:
-                          - filename: "plik.pdf"
-                            mimeType: "application/pdf"
-                            size: 123456
-                            attachmentId: "ANGjdJ..."
-                            partId: "2"
-                            isInline: false
-        "400":
-          description: Brak lub błędne parametry (`missing_threadId` itp.)
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/GmailThreadResponseRaw"
+                  - $ref: "#/components/schemas/GmailThreadResponse"
+        "4XX":
+          description: Brak lub błędne parametry
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "401":
-          description: Brak autoryzacji
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "500":
-          description: Błąd serwera (`gmail_thread_failed`)
+        "5XX":
+          description: Błąd serwera / Gmail
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   /gmail/attachment:
     get:
-      operationId: getGmailAttachment
-      summary: Pobierz załącznik Gmail (binarnie lub JSON)
-      description: >
-        Dla `stream=1` zwraca plik binarnie (`application/octet-stream`)
-        z nagłówkiem `Content-Disposition`. Bez `stream` zwraca JSON
-        z metadanymi i danymi base64 (`data`).
-      # Skopiuj taki sam blok security jak przy /gmail/messages, a jeśli nie chcesz teraz ruszać — zostaw publicznie:
-      security: []
+      operationId: gmailAttachmentGet
+      summary: Pobranie załącznika (JSON lub streaming binarny)
       parameters:
         - in: query
           name: messageId
           required: true
           schema: { type: string }
-          description: ID wiadomości (Gmail)
         - in: query
           name: attachmentId
           required: true
           schema: { type: string }
-          description: ID załącznika (Gmail)
         - in: query
           name: stream
-          required: false
-          schema: { type: boolean, default: false }
-          description: true = strumień binarny (download)
+          description: 1 = odpowiedź binarna (octet-stream)
+          schema: { type: integer, enum: [0,1], default: 0 }
       responses:
         "200":
           description: OK
-          headers:
-            Content-Disposition:
-              description: 'attachment; filename="<nazwa pliku>"'
-              schema:
-                type: string
           content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  filename: { type: string }
+                  contentType: { type: string }
+                  contentBase64: { type: string, description: "base64 (nie base64url)" }
+                required: [filename, contentType, contentBase64]
             application/octet-stream:
               schema:
                 type: string
                 format: binary
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GmailAttachmentData"
-              examples:
-                jsonInline:
-                  summary: JSON z danymi base64 (bez stream)
-                  value:
-                    filename: "film.mp4"
-                    mimeType: "video/mp4"
-                    size: 8875479
-                    data: "BASE64…"
-        "400":
-          description: Brak lub błędne parametry (`missing_messageId`, `missing_attachmentId`)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "401":
-          description: Brak autoryzacji
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "404":
-          description: Nie znaleziono (`attachment_not_found`)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "413":
-          description: Załącznik zbyt duży dla trybu JSON (`attachment_too_large`)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "500":
-          description: Błąd serwera (`gmail_attachment_failed`)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }          
-
-
-
-
-  /gmail/send:
-    post:
-      operationId: sendGmail
-      summary: Wysyła wiadomość (HTML/plain + załączniki)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SendMailRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SendMailResponse"
         "4XX":
-          description: Błąd danych / uprawnień
+          description: Brak lub błędne parametry / Nie znaleziono
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -500,83 +196,27 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
-  /gmail/reply:
-    post:
-      operationId: gmailReply
-      summary: Odpowiada w wątku (thread) — ustawia In-Reply-To/References
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReplyMailRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReplyMailResponse"
-        "4XX":
-          description: Błąd danych / uprawnień
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "5XX":
-          description: Błąd serwera / Gmail
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-  /agent/command:
-    post:
-      operationId: agentCommand
-      summary: Prosty parser komend tekstowych (NLU-lite)
-      description: |
-        Rozpoznaje proste komendy w języku polskim i wywołuje istniejące endpointy:
-        - Gmail: oznaczanie maila (read/unread/star/unst ar)
-        - Drive: wyszukiwanie z typem i prefiksem
-        - Calendar: przełożenie wydarzenia po ID na nową godzinę (opcjonalnie data)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AgentCommandRequest"
-            examples:
-              mailUnread:
-                value: { text: "oznacz mail 19907541ef45f5c5 jako nieprzeczytany" }
-              drivePdf:
-                value: { text: "znajdź na drive pdf z prefiksem Faktura, limit 5" }
-              calMove:
-                value: { text: "przełóż wydarzenie id:abc123 na 16:30 jutro" }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AgentCommandResponse"
-        "4XX":
-          description: Błąd walidacji / nie rozpoznano
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
   /gmail/labels:
     get:
-      operationId: listGmailLabels
+      operationId: gmailLabelsList
       summary: Lista etykiet Gmail
-      security: []
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/GmailLabel" }
+                type: object
+                properties:
+                  value:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
         "4XX":
-          description: Błąd żądania
+          description: Błąd zapytania
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -588,21 +228,34 @@ paths:
 
   /gmail/modify:
     post:
-      operationId: modifyGmailMessage
-      summary: Dodaj/usuń etykiety w wiadomości
+      operationId: gmailModify
+      summary: Dodaj/usuń etykiety (np. STARRED)
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ModifyMailRequest" }
+            schema:
+              type: object
+              properties:
+                id: { type: string }
+                addLabels:
+                  type: array
+                  items: { type: string }
+                removeLabels:
+                  type: array
+                  items: { type: string }
+              required: [id]
       responses:
         "200":
-          description: Zmieniono etykiety
+          description: OK
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
         "4XX":
-          description: Błąd żądania
+          description: Błąd walidacji
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -614,7 +267,7 @@ paths:
 
   /gmail/markAsRead:
     post:
-      operationId: markAsRead
+      operationId: gmailMarkAsRead
       summary: Oznacz jako przeczytane
       requestBody:
         required: true
@@ -623,16 +276,19 @@ paths:
             schema:
               type: object
               properties:
-                id: { type: string, description: "ID wiadomości" }
+                id: { type: string }
               required: [id]
       responses:
         "200":
-          description: Zmieniono etykiety
+          description: OK
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
         "4XX":
-          description: Błąd żądania
+          description: Błąd walidacji
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -644,7 +300,7 @@ paths:
 
   /gmail/markAsUnread:
     post:
-      operationId: markAsUnread
+      operationId: gmailMarkAsUnread
       summary: Oznacz jako nieprzeczytane
       requestBody:
         required: true
@@ -653,16 +309,19 @@ paths:
             schema:
               type: object
               properties:
-                id: { type: string, description: "ID wiadomości" }
+                id: { type: string }
               required: [id]
       responses:
         "200":
-          description: Zmieniono etykiety
+          description: OK
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ModifyMailResponse" }
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
         "4XX":
-          description: Błąd żądania
+          description: Błąd walidacji
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -672,112 +331,182 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  /gmail/send:
+    post:
+      operationId: gmailSend
+      summary: Wyślij e-mail (z opcjonalnymi załącznikami)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                to: { type: string }
+                cc: { type: string }
+                bcc: { type: string }
+                subject: { type: string }
+                text: { type: string }
+                html: { type: string }
+                attachments:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/GmailAttachment"
+              required: [to, subject]
+      responses:
+        "200":
+          description: Wysłane / zaakceptowane
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  threadId: { type: string }
+                  ok: { type: boolean }
+        "4XX":
+          description: Błąd walidacji lub autoryzacji
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera / Gmail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /drive/search:
+    get:
+      operationId: driveSearch
+      summary: Wyszukiwanie plików na Drive
+      parameters:
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DriveFile"
+                required: [files]
+        "4XX":
+          description: Błąd zapytania
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /calendar/create:
+    post:
+      operationId: calendarCreate
+      summary: Utwórz wydarzenie w Kalendarzu
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                summary: { type: string }
+                description: { type: string }
+                location: { type: string }
+                startISO: { type: string, description: "YYYY-MM-DDTHH:mm:ss" }
+                endISO:   { type: string, description: "YYYY-MM-DDTHH:mm:ss" }
+                timeZone: { type: string, default: "Europe/Warsaw" }
+                createMeet: { type: boolean, default: true }
+                remindersOverride:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      method: { type: string }
+                      minutes: { type: integer }
+              required: [summary, startISO]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  htmlLink: { type: string }
+        "4XX":
+          description: Błąd walidacji
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "5XX":
+          description: Błąd serwera
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
 components:
-  securitySchemes:
-    AdminToken:
-      type: apiKey
-      in: header
-      name: x-admin-token
-      description: Wymagany nagłówek administracyjny do /auth/reset
   schemas:
     ErrorResponse:
-    type: object
-    properties:
-      error:
-        type: string
-        description: Krótki kod błędu (np. gmail_thread_failed)
-      status:
-        type: integer
-        description: HTTP status (np. 400/401/500)
-      details:
-        description: Dodatkowe informacje (tekst/obiekt/tablica)
-        oneOf:
-          - type: string
-          - type: object
-          - type: array
-    required: [error, status]
+      type: object
+      properties:
+        error:
+          type: string
+          description: Krótki kod błędu (np. gmail_thread_failed)
+        status:
+          type: integer
+          description: HTTP status (np. 400/401/500)
+        details:
+          description: Dodatkowe informacje (tekst/obiekt/tablica)
+          oneOf:
+            - type: string
+            - type: object
+            - type: array
+      required: [error, status]
+
+    GmailAttachmentMeta:
+      type: object
+      properties:
+        filename:     { type: string }
+        mimeType:     { type: string }
+        size:         { type: integer }
+        attachmentId: { type: string, nullable: true }
+        partId:       { type: string, nullable: true }
+        isInline:     { type: boolean, nullable: true }
+        contentId:    { type: string, nullable: true }
+        disposition:  { type: string, nullable: true }
+
+    GmailAttachment:
+      type: object
+      properties:
+        filename:      { type: string }
+        contentType:   { type: string, description: "Domyślnie application/octet-stream" }
+        contentBase64: { type: string, description: "Zawartość pliku w base64 (NIE base64url)" }
+      required: [filename, contentBase64]
+
     GmailMessageMeta:
       type: object
       required: [id, threadId]
       properties:
-        id:        { type: string }
-        threadId:  { type: string }
-        subject:   { type: string }
-        from:      { type: string }
-        to:        { type: string }
-        date:      { type: string, format: date-time, nullable: true }
-        snippet:   { type: string }
-
-    CreateEventRequest:
-      type: object
-      properties:
-        summary:     { type: string }
-        description: { type: string }
-        location:    { type: string }
-        startISO:    { type: string, description: "ISO 8601 lub YYYY-MM-DD (całodniowe)" }
-        endISO:      { type: string, description: "ISO 8601 lub YYYY-MM-DD (całodniowe)" }
-        timeZone:    { type: string, default: "Europe/Warsaw" }
-        attendeesEmails:
-          type: array
-          items: { type: string }
-        createMeet:  { type: boolean, description: "Jeśli true, doda Google Meet" }
-        sendUpdates:
-          type: string
-          enum: [all, none]
-          default: none
-
-    CreateEventResponse:
-      type: object
-      properties:
-        id:          { type: string }
-        htmlLink:    { type: string }
-        hangoutLink: { type: string }
-        conferenceData:
-          type: object
-          additionalProperties: true
-
-    DriveFile:
-      type: object
-      properties:
-        id:           { type: string }
-        name:         { type: string }
-        mimeType:     { type: string }
-        modifiedTime: { type: string }
-        webViewLink:  { type: string }
-        iconLink:     { type: string }
-        size:         { type: string }
-        owners:
-          type: array
-          items:
-            type: object
-            properties:
-              displayName:  { type: string }
-              emailAddress: { type: string }
-
-    DriveSearchResponse:
-      type: object
-      properties:
-        files:
-          type: array
-          items: { $ref: "#/components/schemas/DriveFile" }
-        nextPageToken: { type: string }
-        pageSize:      { type: integer }
-        q:             { type: string }
-        orderBy:       { type: string }
-        namePrefix:    { type: string }
-        sort:          { type: string, description: "name | modified" }
-        sortDir:       { type: string, description: "asc | desc" }
-        scans:         { type: integer, description: "Ilość stron pobranych z Drive (przy allPages)" }
-
-    GmailMessageListItem:
-      type: object
-      properties:
-        id:      { type: string }
-        snippet: { type: string }
-        subject: { type: string }
-        from:    { type: string }
-        date:    { type: string, description: "ISO 8601" }
+        id:       { type: string }
+        threadId: { type: string }
+        subject:  { type: string }
+        from:     { type: string }
+        to:       { type: string }
+        date:     { type: string, description: "ISO 8601" }
+        snippet:  { type: string }
 
     GmailMessageDetails:
       type: object
@@ -810,190 +539,22 @@ components:
           items: { $ref: "#/components/schemas/GmailMessageDetails" }
         count:  { type: integer, description: "Liczba wiadomości w wątku" }
 
-    GmailAttachmentMeta:
-      filename:     { type: string }
-      mimeType:     { type: string }
-      size:         { type: integer }
-      attachmentId: { type: string, nullable: true }
-      partId:       { type: string, nullable: true }
-      isInline:     { type: boolean, nullable: true }
-      contentId:    { type: string, nullable: true }
-      disposition:  { type: string, nullable: true }
-    GmailAttachment:
-      type: object
-      properties:
-        filename:      { type: string }
-        contentType:   { type: string, description: "Domyślnie application/octet-stream" }
-        contentBase64: { type: string, description: "Zawartość pliku w base64 (NIE base64url)" }
-
-    SendMailRequest:
-      type: object
-      properties:
-        to:      { type: string, description: "Adres odbiorcy (lub lista rozdzielona przecinkami)" }
-        subject: { type: string }
-        text:    { type: string }
-        html:    { type: string }
-        from:    { type: string, description: "Nadawca (opcjonalnie)" }
-        attachments:
-          type: array
-          items: { $ref: "#/components/schemas/GmailAttachment" }
-      required: [to, subject]
-
-    SendMailResponse:
-      type: object
-      properties:
-        id:       { type: string }
-        threadId: { type: string }
-        labelIds:
-          type: array
-          items: { type: string }
-
-    ReplyMailRequest:
-      type: object
-      description: Podaj replyToMessageId LUB threadId (wymagane jest jedno z nich).
-      properties:
-        replyToMessageId:
-          type: string
-          description: ID wiadomości, do której odpowiadamy (backend sam pobierze nagłówki do In-Reply-To/References)
-        threadId:
-          type: string
-          description: Alternatywnie — odpowiedź w danym wątku (bez replyToMessageId)
-        to:
-          type: string
-          description: Jeśli brak – backend użyje Reply-To/From z oryginału
-        subject:
-          type: string
-          description: 'Domyślnie "Re: {Subject oryginału}"'
-        text:
-          type: string
-          description: Treść jako plaintext (opcjonalnie)
-        html:
-          type: string
-          description: Treść jako HTML (opcjonalnie)
-        inReplyTo:
-          type: string
-          description: Wartość nagłówka In-Reply-To (Message-ID oryginału); zwykle nie trzeba podawać
-        references:
-          type: string
-          description: Wartość nagłówka References; zwykle nie trzeba podawać
-        attachments:
-          type: array
-          items:
-            $ref: "#/components/schemas/GmailAttachment"
-      oneOf:
-        - type: object
-          properties:
-            replyToMessageId: { type: string }
-          required: [replyToMessageId]
-        - type: object
-          properties:
-            threadId: { type: string }
-          required: [threadId]
-      example:
-        replyToMessageId: "179af3c7b2e5c0ab"
-        to: "example@domain.com"
-        subject: "Re: Zapytanie ofertowe"
-        text: "Dziękuję za wiadomość — odpisuję w wątku."
-
-    ReplyMailResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        threadId:
-          type: string
-        labelIds:
-          type: array
-          items:
-            type: string
-
-    GmailLabel:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        type:
-          type: string
-        messageListVisibility:
-          type: string
-        labelListVisibility:
-          type: string
-
-    ModifyMailRequest:
-      type: object
-      properties:
-        id:
-          type: string
-          description: "ID wiadomości Gmail"
-        addLabels:
-          type: array
-          description: "Nazwy LUB ID etykiet do dodania (np. UNREAD, STARRED, 'Moja etykieta')"
-          items:
-            type: string
-        removeLabels:
-          type: array
-          description: "Nazwy LUB ID etykiet do usunięcia"
-          items:
-            type: string
-      required:
-        - id
-
-    ModifyMailResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        threadId:
-          type: string
-        labelIds:
-          type: array
-          items:
-            type: string
-
-    AgentCommandRequest:
-      type: object
-      properties:
-        text:
-          type: string
-          description: "Komenda w języku polskim"
-      required:
-        - text
-
-    AgentCommandResponse:
-      type: object
-      properties:
-        action:
-          type: string
-          description: "Jaką akcję wykonano (gmail.modify/drive.search/calendar.update/...)"
-        request:
-          type: object
-          additionalProperties: true
-        result:
-          type: object
-          additionalProperties: true
-        say:
-          type: string
-          description: "Krótki komunikat dla użytkownika"
-
     GmailThreadResponseRaw:
       type: object
       properties:
-        id:        { type: string, description: "ID wątku" }
-        count:     { type: integer, format: int32, description: "Liczba wiadomości" }
+        id:    { type: string }
+        count: { type: integer }
         messages:
           type: array
-          items:
-            oneOf:
-              - $ref: "#/components/schemas/GmailMessageDetails"
-              - $ref: "#/components/schemas/GmailMessageListItem"
+          items: { $ref: "#/components/schemas/GmailMessageDetails" }
 
-    GmailAttachmentData:
+    DriveFile:
       type: object
       properties:
-        filename:   { type: string }
-        mimeType:   { type: string }
-        size:       { type: integer, format: int64 }
-        data:       { type: string, description: "Base64 (standard), zawartość pliku" }
-      required: [ filename, mimeType, size, data ]      
+        id:          { type: string }
+        name:        { type: string }
+        mimeType:    { type: string }
+        webViewLink: { type: string }
+        iconLink:    { type: string }
+        modifiedTime: { type: string }
+        size:         { type: string }
