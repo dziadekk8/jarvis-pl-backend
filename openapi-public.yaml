@@ -1,4 +1,4 @@
-openapi: 3.0.3
+﻿openapi: 3.1.0
 info:
   title: Jarvis-PL API
   version: "1.0.0"
@@ -11,8 +11,8 @@ info:
 servers:
   - url: https://ai.aneuroasystent.pl
     description: Production
-  - url: http://localhost:8080
-    description: Lokalny serwer deweloperski
+  #- url: http://localhost:8080
+   # description: Lokalny serwer deweloperski
 
 security:
   - {}
@@ -474,6 +474,7 @@ components:
             - type: string
             - type: object
             - type: array
+            - items: {}
       required: [error, status]
 
     GmailAttachmentMeta:
@@ -482,11 +483,11 @@ components:
         filename:     { type: string }
         mimeType:     { type: string }
         size:         { type: integer }
-        attachmentId: { type: string, nullable: true }
-        partId:       { type: string, nullable: true }
-        isInline:     { type: boolean, nullable: true }
-        contentId:    { type: string, nullable: true }
-        disposition:  { type: string, nullable: true }
+        attachmentId: { type: [string, "null"] }
+        partId:       { type: [string, "null"] }
+        isInline:     { type: [boolean, "null"] }
+        contentId:    { type: [string, "null"] }
+        disposition:  { type: [string, "null"] }
 
     GmailAttachment:
       type: object
@@ -558,3 +559,4 @@ components:
         iconLink:    { type: string }
         modifiedTime: { type: string }
         size:         { type: string }
+
