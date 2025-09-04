@@ -8,15 +8,28 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
+
 jobs:
   ping:
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
-      - name: Curl /health
+      - name: Ping endpoints
         run: |
           set -e
-          echo "Pinging: $BASE_URL/health"
-          curl -fsS -m 15 -A "keepalive-gha" "$BASE_URL/health" | head -c 200
+          for path in "/health" "/"; do
+            echo "Pinging: $BASE_URL$path"
+            for i in 1 2 3; do
+              if curl -fsS -m 15 -A "keepalive-gha" "$BASE_URL$path" >/dev/null; then
+                echo "OK"
+                break
+              fi
+              echo "retry $i..."
+              sleep 2
+            done
+          done
     env:
       BASE_URL: https://ai.aneuroasystent.pl
