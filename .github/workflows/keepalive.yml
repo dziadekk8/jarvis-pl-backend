@@ -2,8 +2,8 @@
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # co 5 min
-  workflow_dispatch: {}      # ręczne odpalenie z zakładki Actions
+    - cron: "*/5 * * * *"     # co 5 min
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -15,21 +15,17 @@ concurrency:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 2
     steps:
-      - name: Ping endpoints
+      - name: Ping endpoints (no-cache, follow redirects)
         run: |
           set -e
-          for path in "/health" "/"; do
-            echo "Pinging: $BASE_URL$path"
-            for i in 1 2 3; do
-              if curl -fsS -m 15 -A "keepalive-gha" "$BASE_URL$path" >/dev/null; then
-                echo "OK"
-                break
-              fi
-              echo "retry $i..."
-              sleep 2
-            done
-          done
+          TS=$(date +%s)
+          echo "Pinging: $BASE_URL/health?ts=$TS"
+          curl -fsSL --http1.1 -m 20 -A "keepalive-gha" "$BASE_URL/health?ts=$TS" | head -c 200
+          echo
+          echo "Pinging: $BASE_URL/?ts=$TS"
+          curl -fsSL --http1.1 -m 20 -A "keepalive-gha" "$BASE_URL/?ts=$TS" | head -c 200
+          echo
     env:
       BASE_URL: https://ai.aneuroasystent.pl
