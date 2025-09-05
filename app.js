@@ -39,6 +39,7 @@ console.log("[ENV] OAUTH_REDIRECT =", OAUTH_REDIRECT);
 
 
 const app = express();
+app.set("trust proxy", true);   // najlepiej tuż po utworzeniu app = express()
 app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
@@ -162,20 +163,26 @@ app.get("/oauth2/start", (_req, res) => {
   return res.redirect(302, url);           // PROD: klasyczny redirect
 });
 // ── Health ───────────────────────────────────────────────────────────────────
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, baseUrl: BASE_URL, time: new Date().toISOString() });
+// ── Health (no-cache + log) ──────────────────────────────────────────────────
+app.get("/health", (req, res) => {
+  try {
+    // log: kiedy, UA i IP (za proxy czytamy X-Forwarded-For)
+    const ua  = req.headers["user-agent"] || "-";
+    const ip  = req.headers["x-forwarded-for"] || req.ip || req.connection?.remoteAddress || "-";
+    console.log(`[HEALTH] ${new Date().toISOString()} ua=${ua} ip=${ip} url=${req.originalUrl}`);
+
+    // anty-cache dla CDN/proxy
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+
+    res.json({ ok: true, now: Date.now() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
-app.get("/diag/env", (_req, res) => {
-  res.json({
-    BASE_URL,
-    OAUTH_REDIRECT,
-    CANONICAL_HOST,
-    IS_PROD,
-    IS_LOCAL_BASE: BASE_URL.startsWith("http://localhost") || BASE_URL.startsWith("http://127.0.0.1"),
-    DISABLE_REDIRECTS: String(process.env.DISABLE_REDIRECTS || ""),
-    NODE_ENV: process.env.NODE_ENV || ""
-  });
-});
+
 
 // ── OAuth endpoints ──────────────────────────────────────────────────────────
 app.get("/auth/url", (_req, res) => {
