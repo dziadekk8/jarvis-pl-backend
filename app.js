@@ -708,6 +708,178 @@ app.get("/gmail/threads", async (req, res) => {
   }
 });
 
+// === Gmail: /gmail/thread (V2 pre-handler guarded by feature flag) ===========
+app.get("/gmail/thread", async (req, res, next) => {
+  if (!FLAG_THREAD_V2) return next(); // flaga off → przepuść do starego handlera
+
+  try {
+    if (!ensureAuthOr401(res)) return;
+    const gmail = gmailClient();
+
+    const threadId = (req.query.threadId || "").toString().trim();
+    const expand   = ["1","true",1,true].includes(req.query.expand);
+    const wantRaw  = ["1","true",1,true].includes(req.query.raw);
+
+    if (!threadId) {
+      return res.status(400).json({ error: "missing_threadId", status: 400, details: "Podaj ?threadId=..." });
+    }
+
+    // ── szybka ścieżka (expand=0 → metadane) ─────────────────────────────────
+    if (!expand) {
+      const thr = await gmail.users.threads.get({ userId: "me", id: threadId, format: "metadata" });
+      const d = thr.data || {};
+      const msgs = Array.isArray(d.messages) ? d.messages : [];
+      console.log("[THREAD V2] meta only for", threadId, "messages:", msgs.length);
+      return res.json({ id: d.id, historyId: d.historyId, snippet: d.snippet || "", messagesCount: msgs.length });
+    }
+
+    // ── helpery ───────────────────────────────────────────────────────────────
+    const getHeader = (arr, name) =>
+      (arr || []).find(h => (h.name || "").toLowerCase() === name.toLowerCase())?.value || "";
+
+    const b64urlToUtf8 = (b64 = "") => {
+      try {
+        return Buffer.from(String(b64).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+      } catch { return ""; }
+    };
+
+    const safeName = (name) =>
+      String(name || "attachment").replace(/[\\\/\r\n\t\0]/g, "_");
+
+    const flattenParts = (payload) => {
+      const out = [];
+      if (!payload) return out;
+      const stack = [payload];
+      while (stack.length) {
+        const p = stack.pop(); if (!p) continue;
+        out.push({
+          mimeType: p.mimeType || "",
+          filename: p.filename || "",
+          body: p.body || {},
+          headers: p.headers || [],
+        });
+        const subs = Array.isArray(p.parts) ? p.parts : [];
+        for (let i = subs.length - 1; i >= 0; i--) stack.push(subs[i]);
+      }
+      return out;
+    };
+
+    const fetchAttachment = async (messageId, attachmentId) => {
+      try {
+        const r = await gmail.users.messages.attachments.get({
+          userId: "me",
+          messageId,
+          id: attachmentId,
+        });
+        return (r.data?.data || "").replace(/\s/g, "");
+      } catch {
+        return "";
+      }
+    };
+
+    // ── pobierz thread (pełna struktura) ─────────────────────────────────────
+    const thr = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
+    const data = thr.data || {};
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+
+    // ── mapowanie wiadomości ─────────────────────────────────────────────────
+    const mapped = await Promise.all(messages.map(async (m) => {
+      const headersArr = m.payload?.headers || [];
+      const base = {
+        id: m.id,
+        threadId: m.threadId,
+        labelIds: m.labelIds || [],
+        snippet: m.snippet || "",
+        internalDate: m.internalDate,
+        headers: {
+          from: getHeader(headersArr, "From"),
+          to: getHeader(headersArr, "To"),
+          cc: getHeader(headersArr, "Cc"),
+          bcc: getHeader(headersArr, "Bcc"),
+          subject: getHeader(headersArr, "Subject"),
+          date: getHeader(headersArr, "Date"),
+          messageId: getHeader(headersArr, "Message-Id") || getHeader(headersArr, "Message-ID"),
+          inReplyTo: getHeader(headersArr, "In-Reply-To"),
+        },
+      };
+
+      // RAW: wątek nie wspiera format=raw → pobieramy osobno per message
+      if (wantRaw) {
+        try {
+          const rawMsg = await gmail.users.messages.get({ userId: "me", id: m.id, format: "raw" });
+          return { ...base, raw: rawMsg.data?.raw || null };
+        } catch {
+          return { ...base, raw: null };
+        }
+      }
+
+      const flat = flattenParts(m.payload);
+      const textParts = [], htmlParts = [];
+      const inline = [], nonInline = [];
+
+      const jobs = [];
+      for (const p of flat) {
+        const disp = getHeader(p.headers, "Content-Disposition") || "";
+        const cid  = getHeader(p.headers, "Content-ID") || getHeader(p.headers, "Content-Id") || "";
+        const isAttachment = /attachment/i.test(disp);
+        const isInline = !isAttachment && (/inline/i.test(disp) || !!cid);
+
+        // tekst/HTML
+        if ((p.mimeType || "").startsWith("text/")) {
+          const bodyTxt = p.body?.data ? b64urlToUtf8(p.body.data) : "";
+          if (/html/i.test(p.mimeType)) htmlParts.push(bodyTxt); else textParts.push(bodyTxt);
+          continue;
+        }
+
+        // załączniki / inline
+        const filename = safeName(p.filename || (isInline ? (cid.replace(/[<>]/g, "") || "inline.bin") : "attachment.bin"));
+        const contentType = p.mimeType || "application/octet-stream";
+
+        const job = async () => {
+          let contentBase64 = "";
+          if (p.body?.data) {
+            contentBase64 = String(p.body.data).replace(/\s/g, "");
+          } else if (p.body?.attachmentId) {
+            contentBase64 = await fetchAttachment(m.id, p.body.attachmentId);
+          }
+          const item = { filename, contentType, contentBase64 };
+          if (isInline) inline.push(item); else nonInline.push(item);
+        };
+
+        if (p.body?.data || p.body?.attachmentId || isAttachment || isInline) jobs.push(job());
+      }
+
+      await Promise.all(jobs);
+
+      return {
+        ...base,
+        body: { html: htmlParts.join("\n"), text: textParts.join("\n") },
+        attachments: nonInline,
+        inline,
+        hasAttachments: nonInline.length > 0,
+        attachmentsCount: nonInline.length,
+        hasInline: inline.length > 0,
+        inlineCount: inline.length,
+      };
+    }));
+
+    console.log("[FLAG] THREAD_PARSER_V2 used for", threadId, "messages:", mapped.length);
+    return res.json({
+      id: data.id,
+      historyId: data.historyId,
+      snippet: data.snippet || "",
+      messages: mapped,
+      messagesCount: mapped.length,
+    });
+
+  } catch (e) {
+    const status = e?.response?.status || 400;
+    console.warn("[THREAD V2] error:", e?.response?.data || e?.message || e);
+    return res.status(status).json({ error: "gmail_thread_v2_failed", status, details: e?.response?.data || e?.message || String(e) });
+  }
+});
+
+
 app.get("/gmail/thread", async (req, res) => {
     // ── V2 guarded by feature-flag ─────────────────────────────────────────────
   if (FLAG_THREAD_V2) {
