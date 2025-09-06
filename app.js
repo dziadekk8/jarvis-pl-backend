@@ -880,259 +880,135 @@ app.get("/gmail/thread", async (req, res, next) => {
 });
 
 
+// === Gmail: /gmail/thread (LEGACY fallback – działa gdy flaga V2 jest OFF) ===
 app.get("/gmail/thread", async (req, res) => {
-    // ── V2 guarded by feature-flag ─────────────────────────────────────────────
-  if (FLAG_THREAD_V2) {
-    try {
-      if (!ensureAuthOr401(res)) return;
-      const gmail = gmailClient();
-
-      const threadId = (req.query.threadId || "").toString().trim();
-      const expand   = ["1","true",1,true].includes(req.query.expand);
-      const wantRaw  = ["1","true",1,true].includes(req.query.raw);
-      if (!threadId) return res.status(400).json({ error: "missing_threadId", status: 400 });
-
-      // szybka ścieżka: bez expand
-      if (!expand) {
-        const thr = await gmail.users.threads.get({ userId: "me", id: threadId, format: "metadata" });
-        const d = thr.data || {};
-        const msgs = Array.isArray(d.messages) ? d.messages : [];
-        return res.json({ id: d.id, historyId: d.historyId, snippet: d.snippet || "", messagesCount: msgs.length });
-      }
-
-      // helpery
-      const getHeader = (arr, name) =>
-        (arr || []).find(h => (h.name || "").toLowerCase() === name.toLowerCase())?.value || "";
-      const decodeBodyData = (b64="") => {
-        try { return Buffer.from(String(b64).replace(/-/g,"+").replace(/_/g,"/"), "base64").toString("utf8"); }
-        catch { return ""; }
-      };
-      const safeName = (name) => (typeof safeFilename === "function"
-        ? safeFilename(name)
-        : String(name || "attachment").replace(/[\\\/\r\n\t\0]/g, "_"));
-
-      const flattenParts = (payload) => {
-        const out = [];
-        if (!payload) return out;
-        const stack = [payload];
-        while (stack.length) {
-          const p = stack.pop(); if (!p) continue;
-          out.push({ mimeType: p.mimeType || "", filename: p.filename || "", body: p.body || {}, headers: p.headers || [] });
-          const sub = Array.isArray(p.parts) ? p.parts : [];
-          for (let i = sub.length - 1; i >= 0; i--) stack.push(sub[i]);
-        }
-        return out;
-      };
-      const fetchAttachment = async (messageId, attachmentId) => {
-        try {
-          const r = await gmail.users.messages.attachments.get({ userId: "me", messageId, id: attachmentId });
-          return (r.data?.data || "").replace(/\s/g, "");
-        } catch { return ""; }
-      };
-
-      const thr = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
-      const data = thr.data || {};
-      const messages = Array.isArray(data.messages) ? data.messages : [];
-
-      const mapped = await Promise.all(messages.map(async (m) => {
-        const headersArr = m.payload?.headers || [];
-        const base = {
-          id: m.id, threadId: m.threadId, labelIds: m.labelIds || [],
-          snippet: m.snippet || "", internalDate: m.internalDate,
-          headers: {
-            from: getHeader(headersArr,"From"),
-            to: getHeader(headersArr,"To"),
-            cc: getHeader(headersArr,"Cc"),
-            bcc: getHeader(headersArr,"Bcc"),
-            subject: getHeader(headersArr,"Subject"),
-            date: getHeader(headersArr,"Date"),
-            messageId: getHeader(headersArr,"Message-Id") || getHeader(headersArr,"Message-ID"),
-            inReplyTo: getHeader(headersArr,"In-Reply-To"),
-          },
-        };
-
-        if (wantRaw) return { ...base, raw: m.raw || null };
-
-        const flat = flattenParts(m.payload);
-        const textParts = [], htmlParts = [];
-        const inline = [], nonInline = [];
-
-        const jobs = [];
-        for (const p of flat) {
-          const disp = getHeader(p.headers, "Content-Disposition") || "";
-          const cid  = getHeader(p.headers, "Content-ID") || getHeader(p.headers, "Content-Id") || "";
-          const isAttachment = /attachment/i.test(disp);
-          const isInline = !isAttachment && (/inline/i.test(disp) || !!cid);
-
-          if ((p.mimeType || "").startsWith("text/")) {
-            const bodyTxt = p.body?.data ? decodeBodyData(p.body.data) : "";
-            if (/html/i.test(p.mimeType)) htmlParts.push(bodyTxt); else textParts.push(bodyTxt);
-            continue;
-          }
-
-          const filename = safeName(p.filename || (isInline ? (cid.replace(/[<>]/g,"") || "inline.bin") : "attachment.bin"));
-          const contentType = p.mimeType || "application/octet-stream";
-
-          const job = async () => {
-            let contentBase64 = "";
-            if (p.body?.data) contentBase64 = String(p.body.data).replace(/\s/g,"");
-            else if (p.body?.attachmentId) contentBase64 = await fetchAttachment(m.id, p.body.attachmentId);
-            const item = { filename, contentType, contentBase64 };
-            if (isInline) inline.push(item); else nonInline.push(item);
-          };
-          if (p.body?.data || p.body?.attachmentId || isAttachment || isInline) jobs.push(job());
-        }
-        await Promise.all(jobs);
-
-        return {
-          ...base,
-          body: { html: htmlParts.join("\n"), text: textParts.join("\n") },
-          attachments: nonInline,
-          inline,
-          hasAttachments: nonInline.length > 0, attachmentsCount: nonInline.length,
-          hasInline: inline.length > 0, inlineCount: inline.length,
-        };
-      }));
-
-      console.log("[FLAG] THREAD_PARSER_V2 used for", threadId, "messages:", mapped.length);
-      return res.json({
-        id: data.id, historyId: data.historyId, snippet: data.snippet || "",
-        messages: mapped, messagesCount: mapped.length,
-      });
-    } catch (e) {
-      const status = e?.response?.status || 400;
-      console.warn("[THREAD V2] error:", e?.response?.data || e?.message || e);
-      return res.status(status).json({ error: "gmail_thread_v2_failed", status, details: e?.response?.data || e?.message || String(e) });
-    }
-  }
-  // ── end of V2 guard ─────────────────────────────────────────────────────────
-
   try {
     if (!ensureAuthOr401(res)) return;
     const gmail = gmailClient();
 
-    // Akceptuj ?id= i ?threadId=
-    const idQ = (req.query.id || req.query.threadId || "").toString().trim();
-    const expand = ["1","true","yes","y"].includes((req.query.expand || "").toString().toLowerCase());
-    const raw    = ["1","true","yes","y"].includes((req.query.raw || "").toString().toLowerCase());
+    const threadId = (req.query.threadId || "").toString().trim();
+    const expand   = ["1","true",1,true].includes(req.query.expand);
+    const wantRaw  = ["1","true",1,true].includes(req.query.raw);
 
-    if (!idQ) {
-      return res.json({ id: null, historyId: null, messages: [] });
+    if (!threadId) {
+      return res.status(400).json({ error: "missing_threadId", status: 400, details: "Podaj ?threadId=..." });
     }
 
-    // 👇 Kluczowa zmiana: bez 'fields' przy expand=1 (pełne dane), lekkie pola przy expand=0
-    let thr;
-    if (expand) {
-      thr = await gmail.users.threads.get({
-        userId: "me",
-        id: idQ,
-        format: "full",
-      });
-    } else {
-      thr = await gmail.users.threads.get({
-        userId: "me",
-        id: idQ,
-        format: "metadata",
-        metadataHeaders: ["Subject","From","To","Date","Message-ID","In-Reply-To","References"],
-        fields: "id,historyId,messages(id,threadId,internalDate,snippet,payload/headers)",
-      });
+    // szybka ścieżka: expand=0 → metadane
+    if (!expand) {
+      const thr = await gmail.users.threads.get({ userId: "me", id: threadId, format: "metadata" });
+      const d = thr.data || {};
+      const msgs = Array.isArray(d.messages) ? d.messages : [];
+      return res.json({ id: d.id, historyId: d.historyId, snippet: d.snippet || "", messagesCount: msgs.length });
     }
 
-    // Helpers
-    const decodeB64 = (s) => {
-      try { return Buffer.from(String(s||"").replace(/-/g,"+").replace(/_/g,"/"), "base64").toString("utf8"); }
+    // helpery (minimalne, bez pobierania danych załączników)
+    const getHeader = (arr, name) =>
+      (arr || []).find(h => (h.name || "").toLowerCase() === name.toLowerCase())?.value || "";
+    const b64urlToUtf8 = (b64="") => {
+      try { return Buffer.from(String(b64).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); }
       catch { return ""; }
     };
-    const partHeadersObj = (part) => {
-      const obj = {}; (part?.headers || []).forEach(ph => { if (ph?.name) obj[ph.name] = ph.value || ""; });
-      return obj;
+    const flattenParts = (payload) => {
+      const out = []; if (!payload) return out;
+      const st = [payload];
+      while (st.length) {
+        const p = st.pop(); if (!p) continue;
+        out.push(p);
+        const sub = Array.isArray(p.parts) ? p.parts : [];
+        for (let i = sub.length - 1; i >= 0; i--) st.push(sub[i]);
+      }
+      return out;
     };
 
-    const mapMsgMeta = (m) => {
-      const hs = m.payload?.headers || [];
-      const h = (name) => hs.find(x => (x.name||"").toLowerCase() === name.toLowerCase())?.value || "";
-      let dateISO = "";
-      try {
-        const d = h("Date");
-        if (d) dateISO = new Date(d).toISOString();
-        else if (m.internalDate) dateISO = new Date(Number(m.internalDate)).toISOString();
-      } catch {}
-      return {
+    // pełne dane (bez pobierania binariów – tylko metadane/treść)
+    const thr = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
+    const data = thr.data || {};
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+
+    const mapped = await Promise.all(messages.map(async (m) => {
+      const headersArr = m.payload?.headers || [];
+      const base = {
         id: m.id,
         threadId: m.threadId,
-        subject: h("Subject") || "",
-        from: h("From") || "",
-        to: h("To") || "",
-        date: dateISO,
+        labelIds: m.labelIds || [],
         snippet: m.snippet || "",
-        headers: Object.fromEntries(hs.map(k => [k.name, k.value])),
+        internalDate: m.internalDate,
+        headers: {
+          from: getHeader(headersArr, "From"),
+          to: getHeader(headersArr, "To"),
+          cc: getHeader(headersArr, "Cc"),
+          bcc: getHeader(headersArr, "Bcc"),
+          subject: getHeader(headersArr, "Subject"),
+          date: getHeader(headersArr, "Date"),
+          messageId: getHeader(headersArr, "Message-Id") || getHeader(headersArr, "Message-ID"),
+          inReplyTo: getHeader(headersArr, "In-Reply-To"),
+        },
       };
-    };
 
-    const mapMsgExpanded = (m) => {
-  const base = mapMsgMeta(m);
-  const attachments = [];
-  const htmlParts = [];
-  const textParts = [];
+      // RAW: pobieramy osobno per message (threads API nie ma format=raw)
+      if (wantRaw) {
+        try {
+          const rawMsg = await gmail.users.messages.get({ userId: "me", id: m.id, format: "raw" });
+          return { ...base, raw: rawMsg.data?.raw || null };
+        } catch {
+          return { ...base, raw: null };
+        }
+      }
 
-  const walk = (part) => {
-    if (!part) return;
-    const mime = part.mimeType || "";
-    const body = part.body || {};
-    const data = body.data || "";
-    const filename = part.filename || "";
-    const PH = partHeadersObj(part);
-    const contentId = (PH["Content-Id"] || "").replace(/[<>]/g, "");
-    const disposition = PH["Content-Disposition"] || "";
-    const isInline = /inline/i.test(disposition) || !!contentId;
+      // minimalne parsowanie treści + same meta załączników (bez pobierania plików)
+      const parts = flattenParts(m.payload);
+      const texts = [], htmls = [];
+      let att = 0, inl = 0;
+      const attachments = [];
+      const inline = [];
 
-    if (/^text\/html/i.test(mime) && data) htmlParts.push(decodeB64(data));
-    if (/^text\/plain/i.test(mime) && data) textParts.push(decodeB64(data));
+      for (const p of parts) {
+        const mime = p.mimeType || "";
+        const disp = (p.headers || []).find(h => (h.name||"").toLowerCase()==="content-disposition")?.value || "";
+        const cid  = (p.headers || []).find(h => (h.name||"").toLowerCase()==="content-id")?.value || "";
+        const isAttachment = /attachment/i.test(disp);
+        const isInline = !isAttachment && (/inline/i.test(disp) || !!cid);
 
-    // Złap zarówno 'inline' jak i 'attachment' — oznacz typem
-    if (body.attachmentId || filename || isInline) {
-      attachments.push({
-        filename: filename || (PH["Name"] || ""),
-        mimeType: mime,
-        size: body.size || 0,
-        attachmentId: body.attachmentId,
-        partId: part.partId,
-        contentId,
-        disposition,
-        isInline
-      });
-    }
-    (part.parts || []).forEach(walk);
-  };
-  walk(m.payload);
+        if (mime.startsWith("text/")) {
+          const bodyTxt = p.body?.data ? b64urlToUtf8(p.body.data) : "";
+          if (/html/i.test(mime)) htmls.push(bodyTxt); else texts.push(bodyTxt);
+        } else if (isAttachment || isInline) {
+          const entry = {
+            filename: (p.filename || (isInline ? (cid || "inline.bin").replace(/[<>]/g,"") : "attachment.bin")),
+            contentType: mime || "application/octet-stream",
+            contentBase64: "" // legacy: nie pobieramy treści
+          };
+          if (isInline) { inline.push(entry); inl++; } else { attachments.push(entry); att++; }
+        }
+      }
 
-  // Metadane, których często oczekują testy:
-  const nonInline = attachments.filter(a => !a.isInline && (a.attachmentId || a.filename));
-  const inline = attachments.filter(a => a.isInline);
+      return {
+        ...base,
+        body: { html: htmls.join("\n"), text: texts.join("\n") },
+        attachments,
+        inline,
+        hasAttachments: att > 0,
+        attachmentsCount: att,
+        hasInline: inl > 0,
+        inlineCount: inl,
+      };
+    }));
 
-  return {
-    ...base,
-    body: { html: htmlParts.join("\n"), text: textParts.join("\n") },
-    attachments,
-    // 👇 kluczowe flagi/liczniki
-    hasAttachments: nonInline.length > 0,
-    attachmentsCount: nonInline.length,
-    hasInline: inline.length > 0,
-    inlineCount: inline.length,
-  };
-};
+    return res.json({
+      id: data.id,
+      historyId: data.historyId,
+      snippet: data.snippet || "",
+      messages: mapped,
+      messagesCount: mapped.length,
+    });
 
-
-    const messages = (thr.data.messages || []).map(m => expand ? mapMsgExpanded(m) : mapMsgMeta(m));
-    const out = { id: thr.data.id, historyId: thr.data.historyId, messages };
-    if (raw) out.rawThread = thr.data;
-
-    res.json(out);
   } catch (e) {
-    const status = e?.response?.status || 500;
-    res.status(status).json({ error: "gmail_thread_failed", status, details: e?.response?.data || e?.message });
+    const status = e?.response?.status || 400;
+    return res.status(status).json({ error: "gmail_thread_failed", status, details: e?.response?.data || e?.message || String(e) });
   }
 });
+
 
 
 
