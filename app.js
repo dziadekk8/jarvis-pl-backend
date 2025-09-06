@@ -1062,6 +1062,66 @@ app.post("/calendar/create", async (req, res) => {
     res.status(status).json({ error: "calendar_create_failed", status, details: e?.response?.data || e?.message });
   }
 });
+
+// === Calendar: GET /calendar/list ============================================
+app.get("/calendar/list", async (req, res) => {
+  try {
+    if (!ensureAuthOr401(res)) return;
+
+    // Klient Calendar
+    const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+
+    // Parametry zapytania
+    const calendarId  = (req.query.calendarId || "primary").toString();
+    const timeMinISO  = req.query.timeMin ? new Date(req.query.timeMin).toISOString()
+                                          : new Date(Date.now()).toISOString();
+    const timeMaxISO  = req.query.timeMax ? new Date(req.query.timeMax).toISOString()
+                                          : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const maxResults  = Math.min(2500, parseInt(req.query.maxResults || "250", 10) || 250);
+    const singleEvents = String(req.query.singleEvents ?? "true").toLowerCase() !== "false";
+    const orderBy     = (req.query.orderBy || (singleEvents ? "startTime" : "updated")).toString();
+
+    // Paginacja
+    const items = [];
+    let pageToken = undefined;
+    do {
+      const { data } = await calendar.events.list({
+        calendarId,
+        timeMin: timeMinISO,
+        timeMax: timeMaxISO,
+        maxResults,
+        singleEvents,   // true → rozwinie powtarzalne po wystąpieniach
+        orderBy,        // przy singleEvents=true: "startTime"
+        showDeleted: false,
+        pageToken,
+      });
+
+      for (const ev of (data.items || [])) {
+        items.push({
+          id: ev.id,
+          status: ev.status,
+          summary: ev.summary || "",
+          description: ev.description || "",
+          location: ev.location || "",
+          start: ev.start?.dateTime || ev.start?.date || null,
+          end:   ev.end?.dateTime   || ev.end?.date   || null,
+          htmlLink: ev.htmlLink || null,
+        });
+      }
+      pageToken = data.nextPageToken || null;
+    } while (pageToken);
+
+    res.json(items);
+  } catch (e) {
+    const status = e?.response?.status || 400;
+    res.status(status).json({
+      error: "calendar_list_failed",
+      status,
+      details: e?.response?.data || e?.message || String(e),
+    });
+  }
+});
+
 // ── Calendar: quickAdd (opcjonalne) ──────────────────────────────────────────
 app.post("/calendar/quickAdd", async (req, res) => {
   try {
