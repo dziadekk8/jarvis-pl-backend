@@ -1,0 +1,31 @@
+﻿name: pr-checks
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping prod (no-cache, follow redirects)
+        run: |
+          set -e
+          TS=$(date +%s)
+          echo "Pinging: $BASE_URL/health?ts=$TS"
+          curl -fsSL --http1.1 -m 20 -A "pr-check-gha" "$BASE_URL/health?ts=$TS" | head -c 200
+          echo
+          echo "Pinging: $BASE_URL/?ts=$TS"
+          curl -fsSL --http1.1 -m 20 -A "pr-check-gha" "$BASE_URL/?ts=$TS" | head -c 200
+          echo
+    env:
+      BASE_URL: https://ai.aneuroasystent.pl
