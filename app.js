@@ -6,8 +6,6 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import path from "path";
-import express from "express";
 
 // publikuj /.well-known/openapi.yaml
 app.use("/.well-known", express.static(path.join(__dirname, ".well-known")));
