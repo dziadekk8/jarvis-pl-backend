@@ -1,206 +1,22 @@
-openapi: 3.1.0
+﻿openapi: 3.1.0
 info:
-  title: jarvis-pl-backend API
-  version: 0.2.0
-  description: >
-    Public API for Jarvis backend, used by GPT Actions.
-    OAuth with Google (Gmail/Calendar) is handled server-side; the client (agent)
-    authenticates to this API with an admin token header `x-admin`.
+  title: Jarvis PL Backend API
+  version: "0.2.0"
+  description: |
+    Publiczna specyfikacja API używana przez agenta. 
+    Wymagane nagłówki (np. x-admin) są opisane w securitySchemes.
 
 servers:
   - url: https://ai.aneuroasystent.pl
-    description: Production (Render)
+    description: production
   - url: http://localhost:8080
-    description: Local development
-
-security:
-  - AdminToken: []
-
-tags:
-  - name: health
-  - name: auth
-  - name: gmail
-  - name: calendar
-
-components:
-  securitySchemes:
-    AdminToken:
-      type: apiKey
-      in: header
-      name: x-admin
-      description: Admin token set as a static secret for the agent.
-  schemas:
-    Health:
-      type: object
-      properties:
-        ok: { type: boolean }
-        now: { type: integer, format: int64 }
-    AuthStatus:
-      type: object
-      properties:
-        authenticated: { type: boolean }
-        hasAccessToken: { type: boolean }
-        hasRefreshToken: { type: boolean }
-        expiry: { type: integer, format: int64, nullable: true }
-    GmailLabel:
-      type: object
-      properties:
-        id: { type: string }
-        name: { type: string }
-        type: { type: string }
-        messageListVisibility: { type: string, nullable: true }
-        labelListVisibility: { type: string, nullable: true }
-    GmailMessageSummary:
-      type: object
-      properties:
-        id: { type: string }
-        threadId: { type: string }
-        labelIds:
-          type: array
-          items: { type: string }
-        internalDate: { type: string, nullable: true }
-        snippet: { type: string }
-    GmailAttachment:
-      type: object
-      properties:
-        filename: { type: string }
-        contentType: { type: string }
-        contentBase64: { type: string, description: "Base64 (URL-safe) body. May be empty for very large files not inlined." }
-    GmailHeaders:
-      type: object
-      properties:
-        from: { type: string }
-        to: { type: string }
-        cc: { type: string }
-        bcc: { type: string }
-        subject: { type: string }
-        date: { type: string }
-        messageId: { type: string }
-        inReplyTo: { type: string }
-    GmailThreadMessage:
-      type: object
-      properties:
-        id: { type: string }
-        threadId: { type: string }
-        labelIds:
-          type: array
-          items: { type: string }
-        snippet: { type: string }
-        internalDate: { type: string, nullable: true }
-        headers: { $ref: '#/components/schemas/GmailHeaders' }
-        body:
-          type: object
-          properties:
-            text: { type: string }
-            html: { type: string }
-        attachments:
-          type: array
-          items: { $ref: '#/components/schemas/GmailAttachment' }
-        inline:
-          type: array
-          items: { $ref: '#/components/schemas/GmailAttachment' }
-        hasAttachments: { type: boolean }
-        attachmentsCount: { type: integer }
-        hasInline: { type: boolean }
-        inlineCount: { type: integer }
-        raw:
-          type: string
-          description: "RFC822 raw (only when raw=1)"
-          nullable: true
-    GmailThreadResponse:
-      type: object
-      properties:
-        id: { type: string }
-        historyId: { type: string }
-        snippet: { type: string }
-        messagesCount: { type: integer }
-        messages:
-          type: array
-          items: { $ref: '#/components/schemas/GmailThreadMessage' }
-    GmailThreadsList:
-      type: object
-      properties:
-        threads:
-          type: array
-          items:
-            type: object
-            properties:
-              id: { type: string }
-              historyId: { type: string }
-        nextPageToken: { type: string, nullable: true }
-    GmailModifyRequest:
-      type: object
-      required: [ id ]
-      properties:
-        id: { type: string, description: "Gmail message id" }
-        addLabels:
-          type: array
-          items: { type: string }
-          description: "Label names to add (mapped to ids server-side)."
-        removeLabels:
-          type: array
-          items: { type: string }
-          description: "Label names to remove (mapped to ids server-side)."
-    GmailModifyResponse:
-      type: object
-      properties:
-        id: { type: string }
-        threadId: { type: string }
-        labelIds:
-          type: array
-          items: { type: string }
-
-    CalendarEvent:
-      type: object
-      properties:
-        id: { type: string }
-        summary: { type: string }
-        description: { type: string, nullable: true }
-        location: { type: string, nullable: true }
-        start: { type: string }
-        end: { type: string }
-        htmlLink: { type: string, nullable: true }
-    CalendarCreateRequest:
-      type: object
-      required: [ summary, start, end ]
-      properties:
-        summary: { type: string }
-        description: { type: string, nullable: true }
-        location: { type: string, nullable: true }
-        start: { type: string, description: "ISO 8601" }
-        end: { type: string, description: "ISO 8601" }
-        timezone: { type: string, nullable: true }
-        attendees:
-          type: array
-          items:
-            type: object
-            properties:
-              email: { type: string }
-    CalendarCreateResponse:
-      type: object
-      properties:
-        id: { type: string }
-        htmlLink: { type: string }
-        status: { type: string }
+    description: local
 
 paths:
-  /health:
-    get:
-      tags: [health]
-      summary: Health check
-      security: []
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Health' }
-
   /:
     get:
-      tags: [health]
-      summary: Root JSON (info)
-      security: []
+      summary: Info o serwisie
+      operationId: getRootInfo
       responses:
         "200":
           description: OK
@@ -209,61 +25,106 @@ paths:
               schema:
                 type: object
                 properties:
-                  ok: { type: boolean }
+                  ok:   { type: boolean }
                   name: { type: string }
-                  time: { type: integer }
-                  env: { type: string }
+                  time: { type: integer, format: int64 }
+                  env:  { type: string }
+
+  /health:
+    get:
+      summary: Healthcheck
+      operationId: getHealth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:  { type: boolean }
+                  now: { type: integer, format: int64 }
 
   /auth/status:
     get:
-      tags: [auth]
-      summary: Server-side OAuth status
-      security: []
+      summary: Status autoryzacji (OAuth)
+      operationId: getAuthStatus
       responses:
         "200":
-          description: OAuth state
+          description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AuthStatus' }
+              schema:
+                type: object
+                properties:
+                  authenticated:   { type: boolean }
+                  hasAccessToken:  { type: boolean }
+                  hasRefreshToken: { type: boolean }
+                  expiry:
+                    oneOf:
+                      - { type: "null" }
+                      - { type: integer, format: int64 }
+
+  /auth/url:
+    get:
+      summary: Pobierz URL logowania do Google (OAuth)
+      operationId: getAuthUrl
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, format: uri }
 
   /gmail/labels:
     get:
-      tags: [gmail]
-      summary: List Gmail labels
+      summary: Lista etykiet Gmail
+      operationId: listGmailLabels
+      security: [{ adminHeader: [] }]
       responses:
         "200":
-          description: Labels
+          description: OK
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/GmailLabel' }
+                items:
+                  $ref: "#/components/schemas/GmailLabel"
 
   /gmail/messages:
     get:
-      tags: [gmail]
-      summary: List messages (minimal)
+      summary: Lista wiadomości (minimal)
+      operationId: listGmailMessages
+      security: [{ adminHeader: [] }]
       parameters:
         - in: query
           name: pageSize
           schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
         - in: query
+          name: pageToken
+          schema: { type: string }
+        - in: query
           name: q
           schema: { type: string }
-          description: "Gmail search query, e.g. `has:attachment newer_than:365d`"
+          description: Gmail search query, np. "has:attachment newer_than:365d"
       responses:
         "200":
-          description: Message summaries
+          description: OK
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/GmailMessageSummary' }
+                items:
+                  $ref: "#/components/schemas/GmailMessageSummary"
 
   /gmail/threads:
     get:
-      tags: [gmail]
-      summary: List threads (id-only)
+      summary: Lista wątków (alias do starszych testów)
+      operationId: listGmailThreads
+      security: [{ adminHeader: [] }]
       parameters:
         - in: query
           name: pageSize
@@ -276,15 +137,26 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Threads list
+          description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GmailThreadsList' }
+              schema:
+                type: object
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:        { type: string }
+                        historyId: { type: string }
+                  nextPageToken: { type: string }
 
   /gmail/thread:
     get:
-      tags: [gmail]
-      summary: Get thread (meta or expanded)
+      summary: Szczegóły wątku (expand=1 pobiera pełne treści i załączniki)
+      operationId: getGmailThread
+      security: [{ adminHeader: [] }]
       parameters:
         - in: query
           name: threadId
@@ -293,79 +165,227 @@ paths:
         - in: query
           name: expand
           schema: { type: boolean, default: false }
-          description: "If true, returns full messages with bodies/attachments."
+          description: >-
+            false: metadane; true: pełne treści (HTML/TXT) + attachments/inline.
         - in: query
           name: raw
           schema: { type: boolean, default: false }
-          description: "If true, also fetches per-message RFC822 raw."
+          description: >-
+            raw=1 pobiera RFC822 per wiadomość (osobne GET /messages/{id}?format=raw).
       responses:
         "200":
-          description: Thread data
+          description: OK
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: '#/components/schemas/GmailThreadResponse'
-                  - type: object
-                    description: "When expand=false: meta only"
-                    properties:
-                      id: { type: string }
-                      historyId: { type: string }
-                      snippet: { type: string }
-                      messagesCount: { type: integer }
-        "400":
-          description: Missing threadId or fetch error
+                $ref: "#/components/schemas/GmailThreadDetail"
 
   /gmail/modify:
     post:
-      tags: [gmail]
-      summary: Add/remove labels on a message
+      summary: Dodaj/usuń etykiety na wiadomości
+      operationId: modifyGmailMessage
+      security: [{ adminHeader: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/GmailModifyRequest' }
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string, description: "ID wiadomości" }
+                addLabels:
+                  type: array
+                  items: { type: string }
+                  description: "Nazwy etykiet do dodania (zamieniane na labelIds)"
+                removeLabels:
+                  type: array
+                  items: { type: string }
+                  description: "Nazwy etykiet do usunięcia (zamieniane na labelIds)"
       responses:
         "200":
-          description: Modified labels
+          description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GmailModifyResponse' }
-
-  /calendar/create:
-    post:
-      tags: [calendar]
-      summary: Create a calendar event
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CalendarCreateRequest' }
-      responses:
-        "200":
-          description: Created event
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CalendarCreateResponse' }
+              schema:
+                type: object
+                properties:
+                  id:       { type: string }
+                  threadId: { type: string }
+                  labelIds:
+                    type: array
+                    items: { type: string }
 
   /calendar/list:
     get:
-      tags: [calendar]
-      summary: List events in a time range
+      summary: Lista wydarzeń w zakresie czasu
+      operationId: listCalendarEvents
+      security: [{ adminHeader: [] }]
       parameters:
         - in: query
           name: timeMin
           required: true
           schema: { type: string }
+          description: ISO8601 (np. 2025-09-07T12:00:00)
         - in: query
           name: timeMax
           required: true
           schema: { type: string }
+          description: ISO8601
       responses:
         "200":
-          description: Events
+          description: OK
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/CalendarEvent' }
+                items:
+                  $ref: "#/components/schemas/CalendarEvent"
+
+  /calendar/create:
+    post:
+      summary: Utwórz wydarzenie w kalendarzu
+      operationId: createCalendarEvent
+      security: [{ adminHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CalendarCreateInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarEvent"
+
+  /calendar/notifications:
+    post:
+      summary: Webhook Google Calendar (loguje, zwraca 200)
+      operationId: calendarNotifications
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:     { type: boolean }
+                  method: { type: string }
+
+components:
+  securitySchemes:
+    adminHeader:
+      type: apiKey
+      in: header
+      name: x-admin
+
+  schemas:
+    GmailLabel:
+      type: object
+      properties:
+        id:   { type: string }
+        name: { type: string }
+        type: { type: string }
+
+    GmailMessageSummary:
+      type: object
+      properties:
+        id:       { type: string }
+        threadId: { type: string }
+        snippet:  { type: string }
+
+    GmailAttachment:
+      type: object
+      properties:
+        filename:      { type: string }
+        contentType:   { type: string }
+        contentBase64: { type: string, description: "base64" }
+
+    GmailMessageDetail:
+      type: object
+      properties:
+        id:         { type: string }
+        threadId:   { type: string }
+        labelIds:
+          type: array
+          items: { type: string }
+        snippet:    { type: string }
+        internalDate: { type: string }
+        headers:
+          type: object
+          properties:
+            from:       { type: string }
+            to:         { type: string }
+            cc:         { type: string }
+            bcc:        { type: string }
+            subject:    { type: string }
+            date:       { type: string }
+            messageId:  { type: string }
+            inReplyTo:  { type: string }
+        body:
+          type: object
+          properties:
+            html: { type: string }
+            text: { type: string }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/GmailAttachment" }
+        inline:
+          type: array
+          items: { $ref: "#/components/schemas/GmailAttachment" }
+        hasAttachments:  { type: boolean }
+        attachmentsCount:{ type: integer }
+        hasInline:       { type: boolean }
+        inlineCount:     { type: integer }
+        raw:
+          oneOf:
+            - { type: "null" }
+            - { type: string }
+
+    GmailThreadDetail:
+      type: object
+      properties:
+        id:          { type: string }
+        historyId:   { type: string }
+        snippet:     { type: string }
+        messagesCount: { type: integer }
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/GmailMessageDetail" }
+
+    CalendarCreateInput:
+      type: object
+      required: [summary, start, end]
+      properties:
+        summary:     { type: string }
+        description: { type: string }
+        location:    { type: string }
+        start:       { type: string, description: "ISO8601" }
+        end:         { type: string, description: "ISO8601" }
+        attendees:
+          type: array
+          items:
+            type: object
+            properties:
+              email: { type: string, format: email }
+
+    CalendarEvent:
+      type: object
+      properties:
+        id:        { type: string }
+        summary:   { type: string }
+        htmlLink:  { type: string, format: uri }
+        location:  { type: string }
+        description: { type: string }
+        start:     { type: string }
+        end:       { type: string }
+        attendees:
+          type: array
+          items:
+            type: object
+            properties:
+              email: { type: string, format: email }
