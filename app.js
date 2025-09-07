@@ -137,6 +137,21 @@ try {
   console.warn("[AUTH] Cannot load tokens:", e?.message || e);
 }
 
+// ── AUTH: opcjonalne ładowanie tokenów z ENV (Render secrets) ────────────────
+// Uwaga: jeśli są i plik i ENV, to ENV wygrywa (nadpisuje poświadczenia w kliencie).
+if (process.env.OAUTH_TOKENS_JSON) {
+  try {
+    const fromEnv = JSON.parse(process.env.OAUTH_TOKENS_JSON);
+    if (fromEnv && (fromEnv.access_token || fromEnv.refresh_token)) {
+      oAuth2Client.setCredentials(fromEnv);
+      console.log("[AUTH] Loaded tokens from ENV OAUTH_TOKENS_JSON");
+    } else {
+      console.warn("[AUTH] OAUTH_TOKENS_JSON present but empty (no access/refresh).");
+    }
+  } catch (e) {
+    console.warn("[AUTH] Cannot parse OAUTH_TOKENS_JSON:", e?.message || e);
+  }
+}
 
 
 // Autoryzacja: admin token lub OAuth (access/refresh). W innym wypadku 401.
@@ -302,7 +317,27 @@ app.get("/auth/status", (_req, res) => {
   });
 });
 
-// ── MIME helpers (Gmail) ─────────────────────────────────────────────────────
+// ── AUTH: eksport bieżących tokenów (admin only) ─────────────────────────────
+app.get("/auth/export", (req, res) => {
+  // wymaga ADMIN_TOKEN w nagłówku: x-admin lub Bearer
+  if (!ensureAuthOr401(res)) return;
+  const cred = oAuth2Client.credentials || {};
+  if (!(cred.access_token || cred.refresh_token)) {
+    return res.status(400).json({ error: "no_tokens", status: 400, details: "Brak tokenów w pamięci procesu." });
+  }
+  // zwracamy tylko bezpieczne pola
+  const out = {
+    access_token : cred.access_token || undefined,
+    refresh_token: cred.refresh_token || undefined,
+    scope        : cred.scope || undefined,
+    token_type   : cred.token_type || "Bearer",
+    expiry_date  : cred.expiry_date || undefined,
+    id_token     : cred.id_token || undefined,
+  };
+  res.json(out);
+});
+
+
 // ── MIME helpers (Gmail) ─────────────────────────────────────────────────────
 function base64Url(bufOrStr) {
   const b = Buffer.isBuffer(bufOrStr) ? bufOrStr : Buffer.from(String(bufOrStr), "utf8");
