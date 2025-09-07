@@ -468,7 +468,7 @@ components:
           type: array
           items: { $ref: "#/components/schemas/GmailAttachment" }
         hasAttachments:  { type: boolean }
-        attachmentsCount:{ type: integer }
+        attachmentsCount: { type: integer }
         hasInline:       { type: boolean }
         inlineCount:     { type: integer }
         raw:
