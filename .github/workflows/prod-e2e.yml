@@ -1,0 +1,26 @@
+﻿name: prod-e2e
+
+on:
+  schedule:
+    - cron: "0 6 * * *"     # codziennie 06:00 UTC (08:00 PL)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print target
+        run: echo "BASE=https://ai.aneuroasystent.pl"
+
+      - name: Run resilient E2E (PowerShell)
+        shell: pwsh
+        env:
+          BASE_URL: https://ai.aneuroasystent.pl
+        run: |
+          ./tests/e2e-resilient.ps1 -Base $env:BASE_URL
