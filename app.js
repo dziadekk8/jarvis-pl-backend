@@ -317,15 +317,15 @@ app.get("/auth/status", (_req, res) => {
   });
 });
 
-// ── AUTH: eksport bieżących tokenów (admin only) ─────────────────────────────
-app.get("/auth/export", (req, res) => {
-  // wymaga ADMIN_TOKEN w nagłówku: x-admin lub Bearer
+// ── AUTH: eksport bieżących tokenów (DEV-only; PROD domyślnie wyłączony) ────
+const ALLOW_AUTH_EXPORT = process.env.ALLOW_AUTH_EXPORT === "1";
+
+const exportTokensHandler = (req, res) => {
   if (!ensureAuthOr401(res)) return;
   const cred = oAuth2Client.credentials || {};
   if (!(cred.access_token || cred.refresh_token)) {
     return res.status(400).json({ error: "no_tokens", status: 400, details: "Brak tokenów w pamięci procesu." });
   }
-  // zwracamy tylko bezpieczne pola
   const out = {
     access_token : cred.access_token || undefined,
     refresh_token: cred.refresh_token || undefined,
@@ -335,7 +335,13 @@ app.get("/auth/export", (req, res) => {
     id_token     : cred.id_token || undefined,
   };
   res.json(out);
-});
+};
+
+// Rejestrujemy endpoint tylko w DEV (lub awaryjnie w PROD przy ALLOW_AUTH_EXPORT=1)
+if (!IS_PROD || ALLOW_AUTH_EXPORT) {
+  app.get("/auth/export", exportTokensHandler);
+}
+
 
 
 // ── MIME helpers (Gmail) ─────────────────────────────────────────────────────
