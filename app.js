@@ -201,6 +201,17 @@ app.get("/health", (req, res) => {
   }
 });
 
+// ── Root (informacyjnie) ─────────────────────────────────────────────────────
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    name: "jarvis-pl-backend",
+    time: Date.now(),
+    env: process.env.NODE_ENV || "",
+  });
+});
+
+
 // ── Diagnostics: /diag/env ───────────────────────────────────────────────────
 app.get("/diag/env", (_req, res) => {
   try {
