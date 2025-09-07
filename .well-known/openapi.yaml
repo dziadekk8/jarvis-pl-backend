@@ -5,12 +5,16 @@ info:
   description: |
     Publiczna specyfikacja API używana przez agenta.
     Zabezpieczone końcówki wymagają nagłówka `x-admin` (securitySchemes.adminHeader).
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
 
 servers:
   - url: https://ai.aneuroasystent.pl
     description: production
-  - url: http://localhost:8080
-    description: local
+
+security: []   # globalnie brak auth; endpointy adminowe nadpisują to lokalnie
+
 
 paths:
   /:
@@ -113,10 +117,13 @@ paths:
           content:
             application/json:
               schema:
+              
                 type: array
                 items:
                   $ref: "#/components/schemas/GmailLabel"
               examples:
+                default:
+                  $ref: '#/components/examples/GmailLabelList'
                 minimal:
                   value:
                     - { id: "INBOX",  name: "INBOX",  type: "system" }
@@ -152,6 +159,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/GmailMessageSummary"
               examples:
+                default:
+                  $ref: '#/components/examples/GmailMessagesList'
                 sample:
                   value:
                     - { id: "19913f5fbd4cb5fc", threadId: "19913f5fbd4cb5fc", snippet: "Dziękujemy za wiadomość..." }
@@ -227,6 +236,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/GmailThreadDetail"
               examples:
+                expand_1:
+                  $ref: '#/components/examples/GmailThreadExpanded'
                 expand1:
                   value:
                     id: "19913f5fbd4cb5fc"
@@ -238,7 +249,6 @@ paths:
                         threadId: "19913f5fbd4cb5fc"
                         labelIds: ["INBOX"]
                         snippet: "Dziękujemy za wiadomość..."
-                        internalDate: "1693812345000"
                         headers:
                           from: "Jan Kowalski <jan@example.com>"
                           to: "Me <me@example.com>"
@@ -333,6 +343,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/CalendarEvent"
               examples:
+                default:
+                  $ref: '#/components/examples/CalendarListResponse'
                 sample:
                   value:
                     - id: "evt_123"
@@ -357,6 +369,8 @@ paths:
             schema:
               $ref: "#/components/schemas/CalendarCreateInput"
             examples:
+              minimal:
+                $ref: '#/components/examples/CalendarCreateRequest'
               simple:
                 value:
                   summary: "SMOKE TEST – spotkanie"
@@ -375,6 +389,8 @@ paths:
                 $ref: "#/components/schemas/CalendarEvent"
               examples:
                 created:
+                  $ref: '#/components/examples/CalendarCreateResponse'
+                created_alt:
                   value:
                     id: "evt_456"
                     summary: "SMOKE TEST – spotkanie"
@@ -444,7 +460,6 @@ components:
           type: array
           items: { type: string }
         snippet:    { type: string }
-        internalDate: { type: string }
         headers:
           type: object
           properties:
@@ -519,3 +534,86 @@ components:
             type: object
             properties:
               email: { type: string, format: email }
+  examples:
+    GmailLabelList:
+      summary: Example labels response
+      value:
+        - id: INBOX
+          name: INBOX
+          type: system
+        - id: STARRED
+          name: STARRED
+          type: system
+
+    GmailMessagesList:
+      summary: Example list of messages (summary view)
+      value:
+        - id: "19913f5fbd4cb5fc"
+          threadId: "19913f5fbd4cb5fc"
+          snippet: "Hello from Alice…"
+        - id: "19913ecf868a469e"
+          threadId: "19913ecf868a469e"
+          snippet: "Invoice attached"
+
+    GmailThreadExpanded:
+      summary: Example expanded thread (expand=1)
+      value:
+        id: "19913f5fbd4cb5fc"
+        historyId: "123456"
+        snippet: "Hello from Alice…"
+        messagesCount: 1
+        messages:
+          - id: "19913f5fbd4cb5fc"
+            threadId: "19913f5fbd4cb5fc"
+            labelIds: [ "INBOX" ]
+            snippet: "Hello from Alice…"
+            headers:
+              from: "Alice <alice@example.com>"
+              to: "You <you@gmail.com>"
+              cc: ""
+              bcc: ""
+              subject: "Sample message"
+              date: "Fri, 06 Sep 2025 10:00:00 +0200"
+              messageId: "<abc@id>"
+              inReplyTo: ""
+            body:
+              text: "Hi!"
+              html: "<p>Hi!</p>"
+            attachments:
+              - filename: "invoice.pdf"
+                contentType: "application/pdf"
+                contentBase64: "JVBERi0x..."   # shortened
+            inline: []
+            hasAttachments: true
+            attachmentsCount: 1
+            hasInline: false
+            inlineCount: 0
+
+    CalendarCreateRequest:
+      summary: Minimal event request
+      value:
+        summary: "SMOKE TEST"
+        start: "2025-09-08T10:00:00Z"
+        end:   "2025-09-08T10:30:00Z"
+        description: "Created by API"
+        location: "Google Meet"
+
+    CalendarCreateResponse:
+      summary: Minimal event response
+      value:
+        id: "evt_123"
+        htmlLink: "https://calendar.google.com/event?eid=..."
+
+    CalendarListResponse:
+      summary: Events for next 24h
+      value:
+        - id: "evt_123"
+          start: "2025-09-08T10:00:00Z"
+          end:   "2025-09-08T10:30:00Z"
+          summary: "Daily standup"
+          location: "Meet"
+        - id: "evt_124"
+          start: "2025-09-08T13:00:00Z"
+          end:   "2025-09-08T13:30:00Z"
+          summary: "Check-in"
+          location: "Office"
