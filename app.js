@@ -8,11 +8,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 // publikuj /.well-known/openapi.yaml
-app.use("/.well-known", express.static(path.join(__dirname, ".well-known")));
-
-
-
-
 // ESM: __dirname tylko raz
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -61,7 +56,18 @@ console.log("[ENV] OAUTH_REDIRECT =", OAUTH_REDIRECT);
 
 
 const app = express();
-
+ 
+// Static: serve OpenAPI under /.well-known (AFTER app init)
+app.use(
+  "/.well-known",
+  express.static(path.join(__dirname, ".well-known"), {
+    setHeaders: (res) => {
+      res.setHeader("Cache-Control", "public, max-age=300, s-maxage=300");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    },
+  })
+);
 app.set("trust proxy", true);   // najlepiej tuż po utworzeniu app = express()
 app.set("trust proxy", true);
 app.use(cors());
@@ -69,19 +75,6 @@ app.use(express.json({ limit: "10mb" }));
 const DISABLE_REDIRECTS = String(process.env.DISABLE_REDIRECTS || "").toLowerCase() === "1" || String(process.env.DISABLE_REDIRECTS || "").toLowerCase() === "true";
 
 // Publikuj /.well-known (OpenAPI)
-app.use(
-  "/.well-known",
-  express.static(path.join(__dirname, ".well-known"), {
-    setHeaders: (res, filePath) => {
-      if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) {
-        res.type("text/yaml");
-      }
-      res.set("Cache-Control", "public, max-age=300");
-    },
-  })
-);
-
-
 // ── Access log (prosty) ──────────────────────────────────────────────────────
 app.use((req, res, next) => {
   if (DISABLE_REDIRECTS) return next();              // <— twardy wyłącznik
@@ -1471,6 +1464,7 @@ app.post("/calendar/quickAdd", async (req, res) => {
 app.listen(PORT, () => {
   if (BASE_URL.includes("localhost")) console.log(`Serwer działa na http://localhost:${PORT}`);
 });
+
 
 
 
