@@ -1,0 +1,52 @@
+﻿name: openapi-smoke
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+  schedule:
+    - cron: "20 4 * * *"  # codziennie ~06:20 CET
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openapi-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      OPENAPI_URL: https://ai.aneuroasystent.pl/.well-known/openapi.yaml
+    steps:
+      - name: Checkout (not strictly required)
+        uses: actions/checkout@v4
+
+      - name: Fetch OpenAPI (200 expected)
+        run: |
+          set -e
+          echo "GET $OPENAPI_URL"
+          http_code=$(curl -sS -w "%{http_code}" -o openapi.yaml "$OPENAPI_URL")
+          test "$http_code" = "200" || (echo "Unexpected HTTP $http_code" && exit 1)
+          head -n 10 openapi.yaml
+
+      - name: Quick sanity (has 'openapi:' + our prod server)
+        run: |
+          set -e
+          grep -E "^openapi:" openapi.yaml >/dev/null || (echo "Missing 'openapi:'" && exit 1)
+          grep -E "https://ai\.aneuroasystent\.pl" openapi.yaml >/dev/null || (echo "Missing prod server URL" && exit 1)
+
+      - name: Setup Node for validator
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install swagger-cli
+        run: npm i -g @apidevtools/swagger-cli
+
+      - name: Validate OpenAPI
+        run: swagger-cli validate openapi.yaml
