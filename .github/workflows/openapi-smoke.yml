@@ -36,9 +36,9 @@ jobs:
 
       - name: Quick sanity (has 'openapi:' + our prod server)
         run: |
-          set -e
-          grep -E "^openapi:" openapi.yaml >/dev/null || (echo "Missing 'openapi:'" && exit 1)
-          grep -E "https://ai\.aneuroasystent\.pl" openapi.yaml >/dev/null || (echo "Missing prod server URL" && exit 1)
+          # -a: traktuj jako tekst; bez ^ aby przejść też z BOM/komentarzem nad openapi:
+          grep -a -E "openapi:" openapi.yaml >/dev/null || (echo "Missing 'openapi:'" && exit 1)
+          grep -a -E "https://ai\.aneuroasystent\.pl" openapi.yaml >/dev/null || (echo "Missing prod server URL" && exit 1)
 
       - name: Setup Node for validator
         uses: actions/setup-node@v4
