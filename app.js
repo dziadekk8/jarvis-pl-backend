@@ -6,6 +6,11 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import path from "path";
+import express from "express";
+
+// publikuj /.well-known/openapi.yaml
+app.use("/.well-known", express.static(path.join(__dirname, ".well-known")));
 
 
 
@@ -56,12 +61,27 @@ console.log("[ENV] BASE_URL =", BASE_URL);
 console.log("[ENV] OAUTH_REDIRECT =", OAUTH_REDIRECT);
 
 
+
 const app = express();
 app.set("trust proxy", true);   // najlepiej tuż po utworzeniu app = express()
 app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 const DISABLE_REDIRECTS = String(process.env.DISABLE_REDIRECTS || "").toLowerCase() === "1" || String(process.env.DISABLE_REDIRECTS || "").toLowerCase() === "true";
+
+// Publikuj /.well-known (OpenAPI)
+app.use(
+  "/.well-known",
+  express.static(path.join(__dirname, ".well-known"), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) {
+        res.type("text/yaml");
+      }
+      res.set("Cache-Control", "public, max-age=300");
+    },
+  })
+);
+
 
 // ── Access log (prosty) ──────────────────────────────────────────────────────
 app.use((req, res, next) => {
