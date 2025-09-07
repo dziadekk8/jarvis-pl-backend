@@ -22,31 +22,36 @@ jobs:
     timeout-minutes: 5
     env:
       OPENAPI_URL: https://ai.aneuroasystent.pl/.well-known/openapi.yaml
-    steps:
-      - name: Checkout (not strictly required)
-        uses: actions/checkout@v4
 
-      - name: Fetch OpenAPI (200 expected)
+    steps:
+      - name: Fetch OpenAPI (expect HTTP 200)
         run: |
           set -e
           echo "GET $OPENAPI_URL"
-          http_code=$(curl -sS -w "%{http_code}" -o openapi.yaml "$OPENAPI_URL")
+          http_code=$(curl -sS -D headers.txt -o openapi.yaml -w "%{http_code}" "$OPENAPI_URL")
           test "$http_code" = "200" || (echo "Unexpected HTTP $http_code" && exit 1)
-          head -n 10 openapi.yaml
+          # prosta sanity: niepusty plik
+          test -s openapi.yaml || (echo "Downloaded file is empty" && exit 1)
+          head -n 12 openapi.yaml || true
 
-      - name: Quick sanity (has 'openapi:' + our prod server)
-        run: |
-          # -a: traktuj jako tekst; bez ^ aby przejść też z BOM/komentarzem nad openapi:
-          grep -a -E "openapi:" openapi.yaml >/dev/null || (echo "Missing 'openapi:'" && exit 1)
-          grep -a -E "https://ai\.aneuroasystent\.pl" openapi.yaml >/dev/null || (echo "Missing prod server URL" && exit 1)
-
-      - name: Setup Node for validator
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install swagger-cli
-        run: npm i -g @apidevtools/swagger-cli
+      - name: Install validators
+        run: |
+          npm i -g @apidevtools/swagger-cli
+          npm i js-yaml
 
-      - name: Validate OpenAPI
+      - name: Validate OpenAPI (swagger-cli)
         run: swagger-cli validate openapi.yaml
+
+      - name: Check servers include prod (Node + js-yaml)
+        run: |
+          node -e "const fs=require('fs');const yaml=require('js-yaml');\
+          const doc=yaml.load(fs.readFileSync('openapi.yaml','utf8'));\
+          if(!doc||!doc.servers){console.error('No servers defined');process.exit(1)};\
+          const hasProd=(doc.servers||[]).some(s=>String((s&&s.url)||'').includes('https://ai.aneuroasystent.pl'));\
+          if(!hasProd){console.error('Missing prod server in servers[]');process.exit(1)};\
+          console.log('OK: servers[] zawiera https://ai.aneuroasystent.pl');"
