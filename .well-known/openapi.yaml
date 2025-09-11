@@ -1610,39 +1610,21 @@ components:
         - contentBase64
     GmailSendRequest:
       type: object
-      properties:
-        from:
-          type: string
-          description: Optional. RFC5322 mailbox.
-        to:
-          type: string
-          description: Comma-separated recipients.
-        subject:
-          type: string
-        text:
-          type: string
-        html:
-          type: string
-        attachments:
-          type: array
-          items:
-            $ref: "#/components/schemas/GmailSendAttachment"
-      required:
-        - to
-        - subject
-      anyOf:
-        - required:
-            - text
-          type: object
-          properties:
-            text:
-              type: string
-        - required:
-            - html
-          type: object
-          properties:
-            html:
-              type: string
+      allOf:
+        - $ref: "#/components/schemas/GmailSendRequestBase"
+        - anyOf:
+            - required:
+                - text
+              type: object
+              properties:
+                text:
+                  type: string
+            - required:
+                - html
+              type: object
+              properties:
+                html:
+                  type: string
     GmailSendResponse:
       type: object
       properties:
@@ -1659,54 +1641,34 @@ components:
         - threadId
     GmailReplyRequest:
       type: object
-      properties:
-        replyToMessageId:
-          type: string
-          description: If set, headers like In-Reply-To/References/Subject/To are inferred.
-        threadId:
-          type: string
-        to:
-          type: string
-        subject:
-          type: string
-        text:
-          type: string
-        html:
-          type: string
-        attachments:
-          type: array
-          items:
-            $ref: "#/components/schemas/GmailSendAttachment"
-        inReplyTo:
-          type: string
-        references:
-          type: string
-      anyOf:
-        - required:
-            - replyToMessageId
-          type: object
-          properties:
-            replyToMessageId:
-              type: string
-        - required:
-            - threadId
-          type: object
-          properties:
-            threadId:
-              type: string
-      oneOf:
-        - required:
-            - text
-          type: object
-          properties:
-            text:
-              type: string
-        - required:
-            - html
-          type: object
-          properties:
-            html:
-              type: string
+      allOf:
+        - $ref: "#/components/schemas/GmailReplyRequestBase"
+        - anyOf:
+            - required:
+                - replyToMessageId
+              type: object
+              properties:
+                replyToMessageId:
+                  type: string
+            - required:
+                - threadId
+              type: object
+              properties:
+                threadId:
+                  type: string
+          oneOf:
+            - required:
+                - text
+              type: object
+              properties:
+                text:
+                  type: string
+            - required:
+                - html
+              type: object
+              properties:
+                html:
+                  type: string
     GmailModifyRequest:
       type: object
       properties:
@@ -1950,6 +1912,54 @@ components:
             $ref: "#/components/schemas/GmailMessage"
       required:
         - id
+    GmailSendRequestBase:
+      properties:
+        from:
+          type: string
+          description: Optional. RFC5322 mailbox.
+        to:
+          type: string
+          description: Comma-separated recipients.
+        subject:
+          type: string
+        text:
+          type: string
+        html:
+          type: string
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/GmailSendAttachment"
+      required:
+        - to
+        - subject
+      additionalProperties: true
+      type: object
+    GmailReplyRequestBase:
+      properties:
+        replyToMessageId:
+          type: string
+          description: If set, headers like In-Reply-To/References/Subject/To are inferred.
+        threadId:
+          type: string
+        to:
+          type: string
+        subject:
+          type: string
+        text:
+          type: string
+        html:
+          type: string
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/GmailSendAttachment"
+        inReplyTo:
+          type: string
+        references:
+          type: string
+      additionalProperties: true
+      type: object
   examples:
     GmailLabelList:
       summary: Example labels response
