@@ -15,41 +15,51 @@
       "description": "Local development"
     },
     {
-      "url": "https://api.example.com",
+      "url": "https://ai.aneuroasystent.pl",
       "description": "Production"
     }
   ],
   "security": [],
   "tags": [
     {
-      "name": "Root"
+      "name": "Root",
+      "description": "Informacje o serwerze i metadane."
     },
     {
-      "name": "Health"
+      "name": "Health",
+      "description": "Szybkie sprawdzenie zdrowia/usług (no-cache)."
     },
     {
-      "name": "Diagnostics"
+      "name": "Diagnostics",
+      "description": "Diagnostyka środowiska i konfiguracji."
     },
     {
-      "name": "OAuth"
+      "name": "OAuth",
+      "description": "Operacje OAuth2 z Google (status/URL)."
     },
     {
-      "name": "Gmail"
+      "name": "Gmail",
+      "description": "Operacje Gmail: wątki, wiadomości, etykiety, modyfikacje."
     },
     {
-      "name": "Drive"
+      "name": "Drive",
+      "description": "Wyszukiwanie i metadane plików Google Drive."
     },
     {
-      "name": "Places"
+      "name": "Places",
+      "description": "Wyszukiwanie miejsc (np. Google Places)."
     },
     {
-      "name": "Agent"
+      "name": "Agent",
+      "description": "Endpointy pomocnicze asystenta."
     },
     {
-      "name": "Calendar"
+      "name": "Calendar",
+      "description": "Operacje Google Calendar: listowanie i tworzenie wydarzeń."
     },
     {
-      "name": "Webhooks"
+      "name": "Webhooks",
+      "description": "Webhooki i powiadomienia push."
     }
   ],
   "paths": {
@@ -93,6 +103,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         },
         "tags": [
@@ -140,6 +153,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           },
           "500": {
             "description": "Error",
@@ -204,6 +220,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         },
         "tags": [
@@ -239,6 +258,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         },
         "tags": [
@@ -282,23 +304,25 @@
                     "$ref": "#/components/examples/GmailLabelList"
                   },
                   "minimal": {
-                    "value": [
-                      {
-                        "id": "INBOX",
-                        "name": "INBOX",
-                        "type": "system"
-                      },
-                      {
-                        "id": "STARRED",
-                        "name": "STARRED",
-                        "type": "system"
-                      },
-                      {
-                        "id": "Label_123",
-                        "name": "Faktury",
-                        "type": "user"
-                      }
-                    ]
+                    "value": {
+                      "value": [
+                        {
+                          "id": "INBOX",
+                          "name": "INBOX",
+                          "type": "system"
+                        },
+                        {
+                          "id": "STARRED",
+                          "name": "STARRED",
+                          "type": "system"
+                        },
+                        {
+                          "id": "Label_123",
+                          "name": "Faktury",
+                          "type": "user"
+                        }
+                      ]
+                    }
                   }
                 }
               }
@@ -458,6 +482,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
           "500": {
             "description": "List failed",
             "content": {
@@ -560,6 +587,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
           "500": {
             "description": "Error listing threads",
             "content": {
@@ -638,15 +668,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GmailThreadDetail",
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/GmailThreadMeta"
-                    },
-                    {
-                      "$ref": "#/components/schemas/GmailThreadV2"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/GmailThread"
                 },
                 "examples": {
                   "expand_1": {
@@ -1185,6 +1207,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         },
         "tags": [
@@ -1207,6 +1232,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         }
       },
@@ -1231,6 +1259,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         }
       },
@@ -1255,6 +1286,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         }
       }
@@ -1276,6 +1310,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           },
           "500": {
             "description": "Error",
@@ -1318,6 +1355,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           }
         }
       }
@@ -1893,6 +1933,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
           "500": {
             "description": "Drive search failed",
             "content": {
@@ -1957,6 +2000,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
           },
           "500": {
             "description": "Missing API key or error",
@@ -2416,8 +2462,7 @@
             "type": "string"
           },
           "htmlLink": {
-            "type": "string",
-            "format": "uri"
+            "type": "string"
           },
           "location": {
             "type": "string"
@@ -2440,7 +2485,8 @@
                   "type": "string",
                   "format": "email"
                 }
-              }
+              },
+              "additionalProperties": true
             }
           }
         }
@@ -3373,23 +3419,73 @@
             ]
           }
         }
+      },
+      "GmailMessage": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "labelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "internalDate": {
+            "type": "string"
+          }
+        }
+      },
+      "GmailThread": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "historyId": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GmailMessage"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
       }
     },
     "examples": {
       "GmailLabelList": {
         "summary": "Example labels response",
-        "value": [
-          {
-            "id": "INBOX",
-            "name": "INBOX",
-            "type": "system"
-          },
-          {
-            "id": "STARRED",
-            "name": "STARRED",
-            "type": "system"
-          }
-        ]
+        "value": {
+          "value": [
+            {
+              "id": "INBOX",
+              "name": "INBOX",
+              "type": "system"
+            },
+            {
+              "id": "STARRED",
+              "name": "STARRED",
+              "type": "system"
+            }
+          ]
+        }
       },
       "GmailMessagesList": {
         "summary": "Example list of messages (summary view)",
@@ -3465,7 +3561,9 @@
         "summary": "Minimal event response",
         "value": {
           "id": "evt_123",
-          "htmlLink": "https://calendar.google.com/event?eid=..."
+          "htmlLink": "https://calendar.google.com/event?eid=...",
+          "start": "2025-09-07T16:00:00+02:00",
+          "end": "2025-09-07T16:30:00+02:00"
         }
       },
       "CalendarListResponse": {
@@ -3554,6 +3652,48 @@
               "raw": "SGVsbG8="
             }
           ]
+        }
+      }
+    },
+    "responses": {
+      "Error400": {
+        "description": "Bad Request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error401": {
+        "description": "Unauthorized",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error403": {
+        "description": "Forbidden",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error404": {
+        "description": "Not Found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
         }
       }
     }

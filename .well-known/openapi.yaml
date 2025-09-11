@@ -12,7 +12,7 @@ info:
 servers:
   - url: http://localhost:8080
     description: Local development
-  - url: https://api.example.com
+  - url: https://ai.aneuroasystent.pl
     description: Production
 security: []
 paths:
@@ -45,6 +45,8 @@ paths:
                     name: jarvis-pl-backend
                     time: 1757258489666
                     env: production
+        "400":
+          $ref: "#/components/responses/Error400"
       tags:
         - Root
   /health:
@@ -75,6 +77,8 @@ paths:
               description: Set to no-store
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/Error400"
         "500":
           description: Error
           content:
@@ -114,6 +118,8 @@ paths:
                     hasAccessToken: true
                     hasRefreshToken: true
                     expiry: 1757261291791
+        "400":
+          $ref: "#/components/responses/Error400"
       tags:
         - OAuth
   /auth/url:
@@ -136,6 +142,8 @@ paths:
                 redirect:
                   value:
                     url: https://accounts.google.com/o/oauth2/v2/auth?client_id=XXX&redirect_uri=https%3A%2F%2Fai.aneuroasystent.pl%2Foauth2%2Fcallback&scope=openid%20profile%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.modify&response_type=code&access_type=offline&prompt=consent
+        "400":
+          $ref: "#/components/responses/Error400"
       tags:
         - OAuth
   /gmail/labels:
@@ -164,15 +172,16 @@ paths:
                   $ref: "#/components/examples/GmailLabelList"
                 minimal:
                   value:
-                    - id: INBOX
-                      name: INBOX
-                      type: system
-                    - id: STARRED
-                      name: STARRED
-                      type: system
-                    - id: Label_123
-                      name: Faktury
-                      type: user
+                    value:
+                      - id: INBOX
+                        name: INBOX
+                        type: system
+                      - id: STARRED
+                        name: STARRED
+                        type: system
+                      - id: Label_123
+                        name: Faktury
+                        type: user
         "400":
           description: Error from Gmail
           content:
@@ -269,6 +278,8 @@ paths:
                     - id: 19913f5a7ec7e73a
                       threadId: 19913f5a7ec7e73a
                       snippet: Załączam umowę w PDF...
+        "400":
+          $ref: "#/components/responses/Error400"
         "500":
           description: List failed
           content:
@@ -329,6 +340,8 @@ paths:
                       - id: 19913f5fbd4cb5fc
                         historyId: "123457"
                     nextPageToken: Cg4IARIAGAY=
+        "400":
+          $ref: "#/components/responses/Error400"
         "500":
           description: Error listing threads
           content:
@@ -382,10 +395,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GmailThreadDetail"
-                oneOf:
-                  - $ref: "#/components/schemas/GmailThreadMeta"
-                  - $ref: "#/components/schemas/GmailThreadV2"
+                $ref: "#/components/schemas/GmailThread"
               examples:
                 expand_1:
                   $ref: "#/components/examples/GmailThreadExpanded"
@@ -619,7 +629,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/CalendarListItem"
+                  $ref: "#/components/schemas/CalendarEvent"
               examples:
                 default:
                   $ref: "#/components/examples/CalendarListResponse"
@@ -677,7 +687,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CalendarCreateResponse"
+                $ref: "#/components/schemas/CalendarEvent"
               examples:
                 created:
                   $ref: "#/components/examples/CalendarCreateResponse"
@@ -727,6 +737,8 @@ paths:
                   value:
                     ok: true
                     method: POST
+        "400":
+          $ref: "#/components/responses/Error400"
       tags:
         - Webhooks
     get:
@@ -741,6 +753,8 @@ paths:
             text/plain:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/Error400"
     put:
       tags:
         - Webhooks
@@ -756,6 +770,8 @@ paths:
                 properties:
                   ok:
                     type: boolean
+        "400":
+          $ref: "#/components/responses/Error400"
     delete:
       tags:
         - Webhooks
@@ -771,6 +787,8 @@ paths:
                 properties:
                   ok:
                     type: boolean
+        "400":
+          $ref: "#/components/responses/Error400"
   /diag/env:
     get:
       tags:
@@ -784,6 +802,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DiagEnv"
+        "400":
+          $ref: "#/components/responses/Error400"
         "500":
           description: Error
           content:
@@ -810,6 +830,8 @@ paths:
               description: Google authorization URL
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/Error400"
   /oauth2/callback:
     get:
       tags:
@@ -1159,6 +1181,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/DriveFile"
+        "400":
+          $ref: "#/components/responses/Error400"
         "500":
           description: Drive search failed
           content:
@@ -1199,6 +1223,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlacesSearchResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
         "500":
           description: Missing API key or error
           content:
@@ -1441,48 +1467,6 @@ components:
           oneOf:
             - type: "null"
             - type: string
-    GmailThreadDetail:
-      type: object
-      properties:
-        id:
-          type: string
-        historyId:
-          type: string
-        snippet:
-          type: string
-        messagesCount:
-          type: integer
-        messages:
-          type: array
-          items:
-            $ref: "#/components/schemas/GmailMessageDetail"
-    CalendarCreateInput:
-      type: object
-      required:
-        - summary
-        - start
-        - end
-      properties:
-        summary:
-          type: string
-        description:
-          type: string
-        location:
-          type: string
-        start:
-          type: string
-          description: ISO8601
-        end:
-          type: string
-          description: ISO8601
-        attendees:
-          type: array
-          items:
-            type: object
-            properties:
-              email:
-                type: string
-                format: email
     CalendarEvent:
       type: object
       properties:
@@ -1492,7 +1476,6 @@ components:
           type: string
         htmlLink:
           type: string
-          format: uri
         location:
           type: string
         description:
@@ -1509,6 +1492,7 @@ components:
               email:
                 type: string
                 format: email
+            additionalProperties: true
     Error:
       type: object
       additionalProperties: false
@@ -1828,104 +1812,6 @@ components:
               - id
         nextPageToken:
           type: string
-    GmailThreadMeta:
-      type: object
-      properties:
-        id:
-          type: string
-        historyId:
-          type: string
-        snippet:
-          type: string
-        messagesCount:
-          type: integer
-      required:
-        - id
-        - messagesCount
-    GmailThreadV2:
-      type: object
-      properties:
-        id:
-          type: string
-        historyId:
-          type: string
-        snippet:
-          type: string
-        messagesCount:
-          type: integer
-        messages:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-              threadId:
-                type: string
-              labelIds:
-                type: array
-                items:
-                  type: string
-              snippet:
-                type: string
-              internalDate:
-                type: string
-              headers:
-                type: object
-                properties:
-                  from:
-                    type: string
-                  to:
-                    type: string
-                  cc:
-                    type: string
-                  bcc:
-                    type: string
-                  subject:
-                    type: string
-                  date:
-                    type: string
-                  messageId:
-                    type: string
-                  inReplyTo:
-                    type: string
-              body:
-                type: object
-                properties:
-                  html:
-                    type: string
-                  text:
-                    type: string
-                required:
-                  - html
-                  - text
-              attachments:
-                type: array
-                items:
-                  $ref: "#/components/schemas/GmailAttachmentItem"
-              inline:
-                type: array
-                items:
-                  $ref: "#/components/schemas/GmailInlineItem"
-              hasAttachments:
-                type: boolean
-              attachmentsCount:
-                type: integer
-              hasInline:
-                type: boolean
-              inlineCount:
-                type: integer
-              raw:
-                type:
-                  - string
-                  - "null"
-            required:
-              - id
-              - threadId
-              - body
-      required:
-        - id
-        - messagesCount
     DriveFile:
       type: object
       properties:
@@ -2122,16 +2008,49 @@ components:
           type:
             - string
             - "null"
+    GmailMessage:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        threadId:
+          type: string
+        labelIds:
+          type: array
+          items:
+            type: string
+        snippet:
+          type: string
+        internalDate:
+          type: string
+    GmailThread:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        snippet:
+          type: string
+        historyId:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/GmailMessage"
+      required:
+        - id
   examples:
     GmailLabelList:
       summary: Example labels response
       value:
-        - id: INBOX
-          name: INBOX
-          type: system
-        - id: STARRED
-          name: STARRED
-          type: system
+        value:
+          - id: INBOX
+            name: INBOX
+            type: system
+          - id: STARRED
+            name: STARRED
+            type: system
     GmailMessagesList:
       summary: Example list of messages (summary view)
       value:
@@ -2188,6 +2107,8 @@ components:
       value:
         id: evt_123
         htmlLink: https://calendar.google.com/event?eid=...
+        start: 2025-09-07T16:00:00+02:00
+        end: 2025-09-07T16:30:00+02:00
     CalendarListResponse:
       summary: Events for next 24h
       value:
@@ -2252,14 +2173,25 @@ components:
               messageId: <abc@id>
               inReplyTo: ""
             raw: SGVsbG8=
+  responses: {}
 tags:
   - name: Root
+    description: Informacje o serwerze i metadane.
   - name: Health
+    description: Szybkie sprawdzenie zdrowia/usług (no-cache).
   - name: Diagnostics
+    description: Diagnostyka środowiska i konfiguracji.
   - name: OAuth
+    description: Operacje OAuth2 z Google (status/URL).
   - name: Gmail
+    description: "Operacje Gmail: wątki, wiadomości, etykiety, modyfikacje."
   - name: Drive
+    description: Wyszukiwanie i metadane plików Google Drive.
   - name: Places
+    description: Wyszukiwanie miejsc (np. Google Places).
   - name: Agent
+    description: Endpointy pomocnicze asystenta.
   - name: Calendar
+    description: "Operacje Google Calendar: listowanie i tworzenie wydarzeń."
   - name: Webhooks
+    description: Webhooki i powiadomienia push.
