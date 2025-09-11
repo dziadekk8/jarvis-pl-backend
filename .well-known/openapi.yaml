@@ -1633,8 +1633,16 @@ components:
       anyOf:
         - required:
             - text
+          type: object
+          properties:
+            text:
+              type: string
         - required:
             - html
+          type: object
+          properties:
+            html:
+              type: string
     GmailSendResponse:
       type: object
       properties:
@@ -1676,13 +1684,29 @@ components:
       anyOf:
         - required:
             - replyToMessageId
+          type: object
+          properties:
+            replyToMessageId:
+              type: string
         - required:
             - threadId
+          type: object
+          properties:
+            threadId:
+              type: string
       oneOf:
         - required:
             - text
+          type: object
+          properties:
+            text:
+              type: string
         - required:
             - html
+          type: object
+          properties:
+            html:
+              type: string
     GmailModifyRequest:
       type: object
       properties:
