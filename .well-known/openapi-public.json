@@ -1489,7 +1489,8 @@
                   "value": {
                     "to": "user@example.com",
                     "subject": "Hello",
-                    "text": "Hi there!"
+                    "text": "Hi there!",
+                    "html": "<p>Hi there!</p>"
                   }
                 }
               }
@@ -1566,7 +1567,9 @@
                 "byReplyToId": {
                   "value": {
                     "replyToMessageId": "1872e5f8f23...",
-                    "text": "Thanks!"
+                    "text": "Thanks!",
+                    "threadId": "19913f5fbd4cb5fc",
+                    "html": "<p>Thanks!</p>"
                   }
                 }
               }
