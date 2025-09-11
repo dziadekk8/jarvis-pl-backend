@@ -1,132 +1,1257 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Jarvis-PL Backend API",
+    "title": "Jarvis PL Backend API",
     "version": "1.0.0",
-    "description": "OpenAPI 3.1 dla backendu Jarvis-PL (Express). Generowane z kodu źródłowego app.js.",
+    "description": "REST API for Gmail, Google Drive, Google Calendar and Google Places utilities,\nplus OAuth bootstrap and simple agent commands. Responses are JSON unless noted.\nAuthentication is required for most endpoints (see `securitySchemes`).\n",
     "license": {
-      "name": "Proprietary",
-      "identifier": "LicenseRef-Proprietary"
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
     }
   },
   "servers": [
     {
-      "url": "https://ai.aneuroasystent.pl",
-      "description": "production"
+      "url": "http://localhost:8080",
+      "description": "Local development"
     },
     {
-      "url": "http://localhost:8080",
-      "description": "local"
+      "url": "https://api.example.com",
+      "description": "Production"
     }
   ],
+  "security": [],
   "tags": [
     {
-      "name": "System",
-      "description": "System health and info endpoints"
+      "name": "Root"
     },
     {
-      "name": "Auth",
-      "description": "OAuth2 authentication and authorization"
+      "name": "Health"
     },
     {
-      "name": "Gmail",
-      "description": "Gmail integration endpoints"
+      "name": "Diagnostics"
     },
     {
-      "name": "Drive",
-      "description": "Google Drive integration"
+      "name": "OAuth"
     },
     {
-      "name": "Calendar",
-      "description": "Google Calendar integration"
+      "name": "Gmail"
     },
     {
-      "name": "Places",
-      "description": "Google Places API integration"
+      "name": "Drive"
     },
     {
-      "name": "Agent",
-      "description": "Agent command processing"
+      "name": "Places"
+    },
+    {
+      "name": "Agent"
+    },
+    {
+      "name": "Calendar"
+    },
+    {
+      "name": "Webhooks"
     }
   ],
   "paths": {
     "/": {
       "get": {
-        "tags": [
-          "System"
-        ],
+        "summary": "Root info",
         "operationId": "getRoot",
-        "summary": "Get root info",
-        "description": "Returns basic information about the API",
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "time": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "env": {
+                      "type": "string"
+                    }
+                  },
                   "$ref": "#/components/schemas/RootInfo"
                 },
-                "example": {
-                  "ok": true,
-                  "name": "jarvis-pl-backend",
-                  "time": 1699123456789,
-                  "env": "production"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                "examples": {
+                  "ok": {
+                    "value": {
+                      "ok": true,
+                      "name": "jarvis-pl-backend",
+                      "time": 1757258489666,
+                      "env": "production"
+                    }
+                  }
                 }
               }
             }
           }
-        }
+        },
+        "tags": [
+          "Root"
+        ]
       }
     },
     "/health": {
       "get": {
-        "tags": [
-          "System"
-        ],
+        "summary": "Health check (no-cache)",
         "operationId": "getHealth",
-        "summary": "Health check",
-        "description": "Returns health status with no-cache headers",
         "responses": {
           "200": {
-            "description": "Healthy",
+            "description": "Service healthy",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "now": {
+                      "type": "integer",
+                      "format": "int64"
+                    }
+                  },
+                  "$ref": "#/components/schemas/HealthOk"
                 },
-                "example": {
-                  "ok": true,
-                  "now": 1699123456789
+                "examples": {
+                  "ok": {
+                    "value": {
+                      "ok": true,
+                      "now": 1757258489594
+                    }
+                  }
                 }
               }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Set to no-store",
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "type": "string"
                 }
               }
             }
           },
           "500": {
-            "description": "Health check failed",
+            "description": "Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/auth/status": {
+      "get": {
+        "summary": "Check if server has Google tokens loaded",
+        "operationId": "getAuthStatus",
+        "responses": {
+          "200": {
+            "description": "Current auth status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authenticated": {
+                      "type": "boolean"
+                    },
+                    "hasAccessToken": {
+                      "type": "boolean"
+                    },
+                    "hasRefreshToken": {
+                      "type": "boolean"
+                    },
+                    "expiry": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "format": "int64"
+                        }
+                      ]
+                    }
+                  },
+                  "$ref": "#/components/schemas/AuthStatus"
+                },
+                "examples": {
+                  "sample": {
+                    "value": {
+                      "authenticated": true,
+                      "hasAccessToken": true,
+                      "hasRefreshToken": true,
+                      "expiry": 1757261291791
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth"
+        ]
+      }
+    },
+    "/auth/url": {
+      "get": {
+        "summary": "Get Google OAuth2 authorization URL (JSON)",
+        "operationId": "getAuthUrl",
+        "responses": {
+          "200": {
+            "description": "Authorization URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "$ref": "#/components/schemas/OAuthUrl"
+                },
+                "examples": {
+                  "redirect": {
+                    "value": {
+                      "url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=XXX&redirect_uri=https%3A%2F%2Fai.aneuroasystent.pl%2Foauth2%2Fcallback&scope=openid%20profile%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.modify&response_type=code&access_type=offline&prompt=consent"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth"
+        ]
+      }
+    },
+    "/gmail/labels": {
+      "get": {
+        "summary": "List Gmail labels",
+        "operationId": "gmailLabels",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Labels list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GmailLabel"
+                      }
+                    },
+                    "Count": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "#/components/examples/GmailLabelList"
+                  },
+                  "minimal": {
+                    "value": [
+                      {
+                        "id": "INBOX",
+                        "name": "INBOX",
+                        "type": "system"
+                      },
+                      {
+                        "id": "STARRED",
+                        "name": "STARRED",
+                        "type": "system"
+                      },
+                      {
+                        "id": "Label_123",
+                        "name": "Faktury",
+                        "type": "user"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error from Gmail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Gmail"
+        ]
+      }
+    },
+    "/gmail/messages": {
+      "get": {
+        "summary": "List messages (minimal or expanded summaries)",
+        "operationId": "gmailMessages",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Gmail search query"
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageToken",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "raw",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes",
+                "y",
+                "0",
+                "false",
+                "no",
+                "n"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "expand",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes",
+                "y",
+                "0",
+                "false",
+                "no",
+                "n"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GmailMessageSummary"
+                  },
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GmailMessageMinimal"
+                      }
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GmailMessageSummary"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "messages": {
+                          "type": "array",
+                          "items": {}
+                        },
+                        "nextPageToken": {
+                          "type": "string"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "#/components/examples/GmailMessagesList"
+                  },
+                  "sample": {
+                    "value": [
+                      {
+                        "id": "19913f5fbd4cb5fc",
+                        "threadId": "19913f5fbd4cb5fc",
+                        "snippet": "Dziękujemy za wiadomość..."
+                      },
+                      {
+                        "id": "19913f5a7ec7e73a",
+                        "threadId": "19913f5a7ec7e73a",
+                        "snippet": "Załączam umowę w PDF..."
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "List failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Gmail"
+        ]
+      }
+    },
+    "/gmail/threads": {
+      "get": {
+        "summary": "List threads (minimal)",
+        "operationId": "gmailThreads",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageToken",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Threads page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "threads": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "historyId": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "nextPageToken": {
+                      "type": "string"
+                    }
+                  },
+                  "$ref": "#/components/schemas/GmailThreadsList"
+                },
+                "examples": {
+                  "sample": {
+                    "value": {
+                      "threads": [
+                        {
+                          "id": "19920979f0112107",
+                          "historyId": "123456"
+                        },
+                        {
+                          "id": "19913f5fbd4cb5fc",
+                          "historyId": "123457"
+                        }
+                      ],
+                      "nextPageToken": "Cg4IARIAGAY="
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error listing threads",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Gmail"
+        ]
+      }
+    },
+    "/gmail/thread": {
+      "get": {
+        "summary": "Get thread meta or expanded content",
+        "operationId": "gmailThread",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "threadId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expand",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes",
+                "y",
+                "0",
+                "false",
+                "no",
+                "n"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "raw",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes",
+                "y",
+                "0",
+                "false",
+                "no",
+                "n"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Thread details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailThreadDetail",
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/GmailThreadMeta"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GmailThreadV2"
+                    }
+                  ]
+                },
+                "examples": {
+                  "expand_1": {
+                    "$ref": "#/components/examples/GmailThreadExpanded"
+                  },
+                  "raw_1": {
+                    "$ref": "#/components/examples/GmailThreadRawResponse"
+                  },
+                  "expand1": {
+                    "value": {
+                      "id": "19913f5fbd4cb5fc",
+                      "historyId": "123457",
+                      "snippet": "Dziękujemy za wiadomość...",
+                      "messagesCount": 1,
+                      "messages": [
+                        {
+                          "id": "19913f5fbd4cb5fc",
+                          "threadId": "19913f5fbd4cb5fc",
+                          "labelIds": [
+                            "INBOX"
+                          ],
+                          "snippet": "Dziękujemy za wiadomość...",
+                          "headers": {
+                            "from": "Jan Kowalski <jan@example.com>",
+                            "to": "Me <me@example.com>",
+                            "subject": "Faktura",
+                            "date": "Tue, 05 Sep 2025 10:12:34 +0200",
+                            "messageId": "<abc123@example.com>"
+                          },
+                          "body": {
+                            "html": "<p>W załączniku faktura.</p>",
+                            "text": "W załączniku faktura."
+                          },
+                          "attachments": [
+                            {
+                              "filename": "faktura.pdf",
+                              "contentType": "application/pdf",
+                              "contentBase64": "JVBERi0xLjQKJc..."
+                            }
+                          ],
+                          "inline": [],
+                          "hasAttachments": true,
+                          "attachmentsCount": 1,
+                          "hasInline": false,
+                          "inlineCount": 0
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing threadId or Gmail error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Gmail"
+        ],
+        "description": "If `expand` is falsy, returns metadata (messages count/snippet).\nIf `expand` is truthy, returns messages with parsed bodies and attachments.\nResponse shape differs depending on feature flag on the server; schema captures the superset (V2).\n"
+      }
+    },
+    "/gmail/modify": {
+      "post": {
+        "summary": "Add/remove labels for a message (accepts label IDs or names)",
+        "operationId": "gmailModify",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Gmail message ID"
+                  },
+                  "addLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "removeLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "$ref": "#/components/schemas/GmailModifyRequest"
+              },
+              "examples": {
+                "sample": {
+                  "$ref": "#/components/examples/GmailModifyRequest"
+                },
+                "star_as_unread": {
+                  "summary": "Oznacz jako nieprzeczytane i dodaj gwiazdkę",
+                  "value": {
+                    "id": "19913f5fbd4cb5fc",
+                    "addLabels": [
+                      "STARRED",
+                      "UNREAD"
+                    ],
+                    "removeLabels": []
+                  }
+                },
+                "star": {
+                  "value": {
+                    "id": "1892a1b...",
+                    "addLabels": [
+                      "STARRED"
+                    ]
+                  }
+                },
+                "unstar": {
+                  "value": {
+                    "id": "1892a1b...",
+                    "removeLabels": [
+                      "STARRED"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Modify result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailModifyResponse"
+                },
+                "examples": {
+                  "sample": {
+                    "$ref": "#/components/examples/GmailModifyResponse"
+                  },
+                  "result": {
+                    "value": {
+                      "id": "19913f5fbd4cb5fc",
+                      "threadId": "19913f5fbd4cb5fc",
+                      "labelIds": [
+                        "INBOX",
+                        "STARRED",
+                        "UNREAD"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing id / Gmail error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Gmail"
+        ]
+      }
+    },
+    "/gmail/markAsUnread": {
+      "post": {
+        "summary": "Mark a message as unread",
+        "operationId": "gmailMarkAsUnread",
+        "description": "Ustawia etykietę UNREAD dla pojedynczej wiadomości.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Gmail message ID (pojedyncza wiadomość)"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "examples": {
+                "sample": {
+                  "$ref": "#/components/examples/GmailMarkAsUnreadRequest"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Modify result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "labelIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "threadId",
+                    "labelIds"
+                  ],
+                  "$ref": "#/components/schemas/GmailModifyResponse"
+                },
+                "examples": {
+                  "sample": {
+                    "$ref": "#/components/examples/GmailMarkAsUnreadResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing id / Gmail error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Gmail"
+        ],
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ]
+      }
+    },
+    "/calendar/list": {
+      "get": {
+        "summary": "List events within a time range",
+        "operationId": "calendarList",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "calendarId",
+            "schema": {
+              "type": "string",
+              "default": "primary"
+            }
+          },
+          {
+            "in": "query",
+            "name": "timeMin",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "timeMax",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "maxResults",
+            "schema": {
+              "type": "integer",
+              "default": 250,
+              "maximum": 2500
+            }
+          },
+          {
+            "in": "query",
+            "name": "singleEvents",
+            "schema": {
+              "type": "string",
+              "description": "If 'false', returns series; default true"
+            }
+          },
+          {
+            "in": "query",
+            "name": "orderBy",
+            "schema": {
+              "type": "string",
+              "description": "Default 'startTime' if singleEvents=true else 'updated'"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CalendarListItem"
+                  }
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "#/components/examples/CalendarListResponse"
+                  },
+                  "sample": {
+                    "value": [
+                      {
+                        "id": "evt_123",
+                        "summary": "SMOKE TEST – spotkanie",
+                        "htmlLink": "https://calendar.google.com/event?eid=...",
+                        "location": "Online",
+                        "description": "Testowe spotkanie",
+                        "start": "2025-09-07T15:00:00+02:00",
+                        "end": "2025-09-07T15:30:00+02:00",
+                        "attendees": [
+                          {
+                            "email": "jan@example.com"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "List error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Calendar"
+        ]
+      }
+    },
+    "/calendar/create": {
+      "post": {
+        "summary": "Create a calendar event on primary",
+        "operationId": "calendarCreate",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarCreateRequest"
+              },
+              "examples": {
+                "minimal": {
+                  "$ref": "#/components/examples/CalendarCreateRequest"
+                },
+                "simple": {
+                  "value": {
+                    "summary": "Team sync",
+                    "description": "Krótki opis",
+                    "location": "Online",
+                    "start": "2025-09-07T16:00:00+02:00",
+                    "end": "2025-09-07T16:30:00+02:00",
+                    "attendees": [
+                      "alice@example.com",
+                      "bob@example.com"
+                    ],
+                    "startISO": "2025-09-12T10:00:00+02:00",
+                    "durationMin": 30,
+                    "conference": "true"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Event created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarCreateResponse"
+                },
+                "examples": {
+                  "created": {
+                    "$ref": "#/components/examples/CalendarCreateResponse"
+                  },
+                  "created_alt": {
+                    "value": {
+                      "id": "evt_456",
+                      "summary": "SMOKE TEST – spotkanie",
+                      "htmlLink": "https://calendar.google.com/event?eid=...",
+                      "location": "Online",
+                      "description": "Krótki opis",
+                      "start": "2025-09-07T16:00:00+02:00",
+                      "end": "2025-09-07T16:30:00+02:00",
+                      "attendees": [
+                        {
+                          "email": "jan@example.com"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Calendar error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Calendar"
+        ]
+      }
+    },
+    "/calendar/notifications": {
+      "post": {
+        "summary": "Google push notifications webhook (echo 200)",
+        "operationId": "calendarNotificationsPost",
+        "responses": {
+          "200": {
+            "description": "Acknowledged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "method": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "examples": {
+                  "ok": {
+                    "value": {
+                      "ok": true,
+                      "method": "POST"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Webhooks"
+        ]
+      },
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "calendarNotificationsGet",
+        "summary": "Simple GET ping endpoint (always returns 200 'ok')",
+        "responses": {
+          "200": {
+            "description": "OK ping",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "calendarNotificationsPut",
+        "summary": "Webhook echo PUT",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "calendarNotificationsDelete",
+        "summary": "Webhook echo DELETE",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
                 }
               }
             }
@@ -137,38 +1262,27 @@
     "/diag/env": {
       "get": {
         "tags": [
-          "System"
+          "Diagnostics"
         ],
-        "operationId": "getDiagnostics",
-        "summary": "Environment diagnostics",
-        "description": "Returns environment configuration for debugging",
+        "operationId": "getDiagEnv",
+        "summary": "Diagnostics of environment",
         "responses": {
           "200": {
-            "description": "Environment info",
+            "description": "Diagnostics snapshot",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DiagnosticsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/DiagEnv"
                 }
               }
             }
           },
           "500": {
-            "description": "Diagnostics failed",
+            "description": "Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -176,34 +1290,31 @@
         }
       }
     },
-    "/auth/url": {
+    "/oauth2/start": {
       "get": {
         "tags": [
-          "Auth"
+          "OAuth"
         ],
-        "operationId": "getAuthUrl",
-        "summary": "Get OAuth2 authorization URL",
-        "description": "Returns Google OAuth2 authorization URL for starting authentication flow",
+        "operationId": "oauth2Start",
+        "summary": "Redirect to Google OAuth2 consent",
         "responses": {
           "200": {
-            "description": "Authorization URL",
+            "description": "DEV-only JSON with URL (unreachable due to early return in current code)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthUrlResponse"
-                },
-                "example": {
-                  "url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=..."
+                  "$ref": "#/components/schemas/OAuthUrl"
                 }
               }
             }
           },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
+          "302": {
+            "description": "Redirect to Google OAuth consent page",
+            "headers": {
+              "Location": {
+                "description": "Google authorization URL",
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "type": "string"
                 }
               }
             }
@@ -211,37 +1322,50 @@
         }
       }
     },
-    "/auth/status": {
+    "/oauth2/callback": {
       "get": {
         "tags": [
-          "Auth"
+          "OAuth"
         ],
-        "operationId": "getAuthStatus",
-        "summary": "Get authentication status",
-        "description": "Returns current OAuth2 token status",
+        "operationId": "oauth2Callback",
+        "summary": "OAuth2 callback from Google",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Authentication status",
+            "description": "OAuth OK message",
             "content": {
-              "application/json": {
+              "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthStatusResponse"
-                },
-                "example": {
-                  "authenticated": true,
-                  "hasAccessToken": true,
-                  "hasRefreshToken": true,
-                  "expiry": 1699127056789
+                  "type": "string"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad Request",
+            "description": "Missing code",
             "content": {
-              "application/json": {
+              "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "OAuth error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -252,38 +1376,435 @@
     "/auth/export": {
       "get": {
         "tags": [
-          "Auth"
+          "OAuth"
         ],
         "operationId": "exportTokens",
-        "summary": "Export OAuth2 tokens",
-        "description": "Returns current OAuth2 tokens (DEV only or ALLOW_AUTH_EXPORT=1)",
+        "summary": "Export current tokens (DEV only or when enabled)",
         "security": [
           {
-            "adminToken": []
+            "AdminHeader": []
           },
           {
-            "oauth2": [
-              "https://www.googleapis.com/auth/userinfo.email"
-            ]
+            "BearerAdmin": []
           }
         ],
         "responses": {
           "200": {
-            "description": "Exported tokens",
+            "description": "Tokens export",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TokenExportResponse"
+                  "$ref": "#/components/schemas/ExportedTokens"
                 }
               }
             }
           },
           "400": {
-            "description": "No tokens available",
+            "description": "No tokens in memory",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gmail/send": {
+      "post": {
+        "tags": [
+          "Gmail"
+        ],
+        "operationId": "gmailSend",
+        "summary": "Send an email via Gmail",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GmailSendRequest"
+              },
+              "examples": {
+                "basic": {
+                  "value": {
+                    "to": "user@example.com",
+                    "subject": "Hello",
+                    "text": "Hi there!"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sent message info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailSendResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Gmail send failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gmail/reply": {
+      "post": {
+        "tags": [
+          "Gmail"
+        ],
+        "operationId": "gmailReply",
+        "summary": "Reply to an email (optionally infer headers)",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GmailReplyRequest"
+              },
+              "examples": {
+                "byReplyToId": {
+                  "value": {
+                    "replyToMessageId": "1872e5f8f23...",
+                    "text": "Thanks!"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sent reply info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailSendResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request / missing data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gmail/markAsRead": {
+      "post": {
+        "tags": [
+          "Gmail"
+        ],
+        "operationId": "gmailMarkAsRead",
+        "summary": "Mark a message as read",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Modify result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailModifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing id / Gmail error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gmail/message": {
+      "get": {
+        "tags": [
+          "Gmail"
+        ],
+        "operationId": "gmailMessage",
+        "summary": "Get a full message with parsed body and attachments",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "raw",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes",
+                "y",
+                "0",
+                "false",
+                "no",
+                "n"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Message details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailMessageFull"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Fetch failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gmail/attachment": {
+      "get": {
+        "tags": [
+          "Gmail"
+        ],
+        "operationId": "gmailAttachment",
+        "summary": "Download an attachment as JSON (base64) or stream",
+        "security": [
+          {
+            "AdminHeader": []
+          },
+          {
+            "BearerAdmin": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stream",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes",
+                "y",
+                "0",
+                "false",
+                "no",
+                "n"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "filename",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mimeType",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "contentType",
+            "schema": {
+              "type": "string",
+              "description": "Alias of mimeType"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment bytes (stream) or JSON payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailAttachmentDownloadResponse"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Attachment not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Attachment too large for JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -296,50 +1817,45 @@
         "tags": [
           "Drive"
         ],
-        "operationId": "searchDriveFiles",
-        "summary": "Search Google Drive files",
-        "description": "Search for files in Google Drive with optional filters",
+        "operationId": "driveSearch",
+        "summary": "Search files in Google Drive",
         "security": [
           {
-            "adminToken": []
+            "AdminHeader": []
           },
           {
-            "oauth2": [
-              "https://www.googleapis.com/auth/drive.readonly"
-            ]
+            "BearerAdmin": []
           }
         ],
         "parameters": [
           {
-            "name": "q",
             "in": "query",
+            "name": "q",
             "schema": {
               "type": "string"
             },
-            "description": "Search query for file names"
+            "description": "Name contains substring"
           },
           {
-            "name": "pageSize",
             "in": "query",
+            "name": "pageSize",
             "schema": {
               "type": "integer",
               "minimum": 1,
               "maximum": 100,
               "default": 20
-            },
-            "description": "Number of files to return"
+            }
           },
           {
-            "name": "namePrefix",
             "in": "query",
+            "name": "namePrefix",
             "schema": {
               "type": "string"
-            },
-            "description": "Filter by name prefix (case insensitive)"
+            }
           },
           {
-            "name": "type",
             "in": "query",
+            "name": "type",
             "schema": {
               "type": "string",
               "enum": [
@@ -360,27 +1876,19 @@
                 "txt",
                 "zip"
               ]
-            },
-            "description": "Filter by file type"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Drive files search results",
+            "description": "Files list (descending by modifiedTime)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DriveSearchResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DriveFile"
+                  }
                 }
               }
             }
@@ -390,7 +1898,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -403,52 +1911,45 @@
         "tags": [
           "Places"
         ],
-        "operationId": "searchPlaces",
-        "summary": "Search Google Places",
-        "description": "Search for places using Google Places API",
+        "operationId": "placesSearch",
+        "summary": "Search nearby places (Google Places API)",
         "parameters": [
           {
+            "in": "query",
             "name": "q",
-            "in": "query",
             "schema": {
-              "type": "string",
-              "default": "kawiarnia"
+              "type": "string"
             },
-            "description": "Search query for places"
+            "description": "Free-text search. Default \"kawiarnia\"."
           },
           {
+            "in": "query",
             "name": "lat",
-            "in": "query",
             "schema": {
               "type": "number",
-              "format": "float",
               "default": 52.2297
-            },
-            "description": "Latitude for location bias"
+            }
           },
           {
-            "name": "lng",
             "in": "query",
+            "name": "lng",
             "schema": {
               "type": "number",
-              "format": "float",
               "default": 21.0122
-            },
-            "description": "Longitude for location bias"
+            }
           },
           {
-            "name": "radius",
             "in": "query",
+            "name": "radius",
             "schema": {
               "type": "integer",
               "default": 3000
-            },
-            "description": "Search radius in meters"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Places search results",
+            "description": "Results",
             "content": {
               "application/json": {
                 "schema": {
@@ -457,22 +1958,12 @@
               }
             }
           },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "500": {
-            "description": "Places search failed or missing API key",
+            "description": "Missing API key or error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -485,18 +1976,16 @@
         "tags": [
           "Places"
         ],
-        "operationId": "getPlaceDetails",
-        "summary": "Get place details",
-        "description": "Get detailed information about a specific place",
+        "operationId": "placesDetails",
+        "summary": "Get place details by resource name",
         "parameters": [
           {
-            "name": "place_id",
             "in": "query",
+            "name": "place_id",
             "required": true,
             "schema": {
               "type": "string"
-            },
-            "description": "Google Places place ID"
+            }
           }
         ],
         "responses": {
@@ -505,7 +1994,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PlaceDetailsResponse"
+                  "$ref": "#/components/schemas/PlaceDetails"
                 }
               }
             }
@@ -515,17 +2004,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
           },
           "500": {
-            "description": "Places details failed or missing API key",
+            "description": "Missing API key or error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -538,9 +2027,8 @@
         "tags": [
           "Agent"
         ],
-        "operationId": "executeAgentCommand",
-        "summary": "Execute agent command",
-        "description": "Process natural language commands for Gmail and Drive operations",
+        "operationId": "agentCommand",
+        "summary": "Execute simple natural-language commands",
         "requestBody": {
           "required": true,
           "content": {
@@ -548,15 +2036,29 @@
               "schema": {
                 "$ref": "#/components/schemas/AgentCommandRequest"
               },
-              "example": {
-                "text": "oznacz mail 18b2f4a7c8d9e10f jako przeczytany"
+              "examples": {
+                "starEmail": {
+                  "value": {
+                    "text": "Oznacz wiadomość 1892a1b gwiazdką"
+                  }
+                },
+                "unreadEmail": {
+                  "value": {
+                    "text": "Oznacz mail 1892a1b jako nieprzeczytany"
+                  }
+                },
+                "drivePrefix": {
+                  "value": {
+                    "text": "Znajdź Drive z prefiksem raport_"
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Command executed successfully",
+            "description": "Action executed / result embedded",
             "content": {
               "application/json": {
                 "schema": {
@@ -566,344 +2068,21 @@
             }
           },
           "400": {
-            "description": "Unrecognized command or missing text",
+            "description": "Unrecognized or invalid command",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
           },
           "500": {
-            "description": "Agent command failed",
+            "description": "Execution error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/calendar/create": {
-      "post": {
-        "tags": [
-          "Calendar"
-        ],
-        "operationId": "createCalendarEvent",
-        "summary": "Create calendar event",
-        "description": "Create a new Google Calendar event with optional Google Meet integration",
-        "security": [
-          {
-            "adminToken": []
-          },
-          {
-            "oauth2": [
-              "https://www.googleapis.com/auth/calendar"
-            ]
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CalendarCreateRequest"
-              },
-              "example": {
-                "summary": "Team Meeting",
-                "description": "Weekly team sync",
-                "location": "Conference Room A",
-                "startISO": "2023-11-04T14:00:00.000Z",
-                "endISO": "2023-11-04T15:00:00.000Z",
-                "attendees": [
-                  "colleague@example.com"
-                ],
-                "conference": "true",
-                "tz": "Europe/Warsaw",
-                "start": "2023-11-04T14:00:00.000Z",
-                "end": "2023-11-04T15:00:00.000Z"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Event created successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CalendarCreateResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Calendar create failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/calendar/list": {
-      "get": {
-        "tags": [
-          "Calendar"
-        ],
-        "operationId": "listCalendarEvents",
-        "summary": "List calendar events",
-        "description": "Get calendar events within a time range",
-        "security": [
-          {
-            "adminToken": []
-          },
-          {
-            "oauth2": [
-              "https://www.googleapis.com/auth/calendar"
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "name": "calendarId",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "default": "primary"
-            },
-            "description": "Calendar ID"
-          },
-          {
-            "name": "timeMin",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "Start time (ISO 8601)"
-          },
-          {
-            "name": "timeMax",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "End time (ISO 8601)"
-          },
-          {
-            "name": "maxResults",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 2500,
-              "default": 250
-            },
-            "description": "Maximum number of events"
-          },
-          {
-            "name": "singleEvents",
-            "in": "query",
-            "schema": {
-              "type": "boolean",
-              "default": true
-            },
-            "description": "Expand recurring events"
-          },
-          {
-            "name": "orderBy",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "startTime",
-                "updated"
-              ]
-            },
-            "description": "Sort order"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Calendar events",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CalendarListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Calendar list failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/calendar/notifications": {
-      "get": {
-        "tags": [
-          "Calendar"
-        ],
-        "operationId": "getCalendarNotifications",
-        "summary": "Calendar notifications endpoint (GET)",
-        "description": "Handle calendar webhook notifications (GET for testing)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Calendar"
-        ],
-        "operationId": "handleCalendarNotifications",
-        "summary": "Calendar notifications webhook",
-        "description": "Handle Google Calendar push notifications",
-        "parameters": [
-          {
-            "name": "x-goog-channel-id",
-            "in": "header",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Google channel ID"
-          },
-          {
-            "name": "x-goog-resource-id",
-            "in": "header",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Google resource ID"
-          },
-          {
-            "name": "x-goog-resource-state",
-            "in": "header",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Google resource state"
-          },
-          {
-            "name": "x-goog-message-number",
-            "in": "header",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Google message number"
-          },
-          {
-            "name": "x-goog-channel-token",
-            "in": "header",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Google channel token"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Notification processed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CalendarNotificationResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "options": {
-        "tags": [
-          "Calendar"
-        ],
-        "operationId": "optionsCalendarNotifications",
-        "summary": "Calendar notifications OPTIONS",
-        "description": "Handle OPTIONS for calendar webhook notifications",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CalendarNotificationResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -916,17 +2095,14 @@
         "tags": [
           "Calendar"
         ],
-        "operationId": "quickAddCalendarEvent",
-        "summary": "Quick add calendar event",
-        "description": "Create calendar event from natural language text",
+        "operationId": "calendarQuickAdd",
+        "summary": "Quick add event from natural text",
         "security": [
           {
-            "adminToken": []
+            "AdminHeader": []
           },
           {
-            "oauth2": [
-              "https://www.googleapis.com/auth/calendar"
-            ]
+            "BearerAdmin": []
           }
         ],
         "requestBody": {
@@ -934,21 +2110,38 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CalendarQuickAddRequest"
-              },
-              "example": {
-                "text": "Meeting with John tomorrow at 2pm"
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "q": {
+                    "type": "string"
+                  }
+                },
+                "description": "Provide either 'text' or 'q'."
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Event created successfully",
+            "description": "Quick add created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CalendarQuickAddResponse"
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "htmlLink": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -958,27 +2151,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
           },
           "500": {
-            "description": "Quick add failed",
+            "description": "Calendar error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -988,110 +2171,283 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "adminHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-admin"
+      },
+      "AdminHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-admin",
+        "description": "Admin secret header. If present and valid, authorizes the request.\nAlternatively, you may pass the same secret as Bearer token in `Authorization`.\n"
+      },
+      "BearerAdmin": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
     "schemas": {
-      "RootInfo": {
+      "GmailLabel": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "ok": {
-            "type": "boolean"
+          "id": {
+            "type": "string"
           },
           "name": {
             "type": "string"
           },
-          "version": {
+          "type": {
             "type": "string"
-          },
-          "time": {
-            "type": "number"
-          },
-          "env": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "ok"
-        ]
-      },
-      "HealthResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "status": {
-            "type": "string"
-          },
-          "now": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "ok"
-        ]
-      },
-      "DiagnosticsResponse": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-          "env": {
-            "type": "object"
           }
         }
       },
-      "AuthUrlResponse": {
+      "GmailMessageSummary": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "url": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "date": {
             "type": "string",
-            "format": "uri"
+            "format": "date-time"
           }
         },
         "required": [
-          "url"
+          "id",
+          "threadId"
         ]
       },
-      "AuthStatusResponse": {
+      "GmailAttachment": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "authenticated": {
-            "type": "boolean"
+          "filename": {
+            "type": "string"
           },
-          "scopes": {
+          "contentType": {
+            "type": "string"
+          },
+          "contentBase64": {
+            "type": "string",
+            "description": "base64"
+          }
+        }
+      },
+      "GmailMessageDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "labelIds": {
             "type": "array",
             "items": {
               "type": "string"
             }
           },
-          "hasAccessToken": {
+          "snippet": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "cc": {
+                "type": "string"
+              },
+              "bcc": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "inReplyTo": {
+                "type": "string"
+              }
+            }
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "html": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GmailAttachment"
+            }
+          },
+          "inline": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GmailAttachment"
+            }
+          },
+          "hasAttachments": {
             "type": "boolean"
           },
-          "hasRefreshToken": {
+          "attachmentsCount": {
+            "type": "integer"
+          },
+          "hasInline": {
             "type": "boolean"
           },
-          "expiry": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "authenticated"
-        ]
-      },
-      "TokenExportResponse": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-          "tokens": {
-            "type": "object"
+          "inlineCount": {
+            "type": "integer"
+          },
+          "raw": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
           }
         }
       },
-      "ErrorResponse": {
+      "GmailThreadDetail": {
         "type": "object",
-        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "historyId": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "messagesCount": {
+            "type": "integer"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GmailMessageDetail"
+            }
+          }
+        }
+      },
+      "CalendarCreateInput": {
+        "type": "object",
+        "required": [
+          "summary",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "ISO8601"
+          },
+          "end": {
+            "type": "string",
+            "description": "ISO8601"
+          },
+          "attendees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "format": "email"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CalendarEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "htmlLink": {
+            "type": "string",
+            "format": "uri"
+          },
+          "location": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          },
+          "end": {
+            "type": "string"
+          },
+          "attendees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "format": "email"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
         "properties": {
           "error": {
             "type": "string"
@@ -1102,120 +2458,765 @@
           "details": {}
         },
         "required": [
-          "error"
+          "error",
+          "status"
         ]
       },
-      "DriveSearchResponse": {
+      "HealthOk": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "now": {
+            "type": "integer",
+            "description": "Unix ms timestamp"
+          }
+        },
+        "required": [
+          "ok",
+          "now"
+        ]
+      },
+      "RootInfo": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "time": {
+            "type": "integer"
+          },
+          "env": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "name",
+          "time"
+        ]
+      },
+      "DiagEnv": {
+        "type": "object",
+        "properties": {
+          "NODE_ENV": {
+            "type": "string"
+          },
+          "BASE_URL": {
+            "type": "string"
+          },
+          "OAUTH_REDIRECT": {
+            "type": "string"
+          },
+          "CANONICAL_HOST": {
+            "type": "string"
+          },
+          "IS_PROD": {
+            "type": "boolean"
+          },
+          "DISABLE_REDIRECTS": {
+            "type": "string"
+          },
+          "HAS_TOKENS_FILE": {
+            "type": "boolean"
+          },
+          "TOKENS_FILE": {
+            "type": "string"
+          },
+          "THREAD_PARSER_V2": {
+            "type": "string"
+          },
+          "FLAG_THREAD_V2": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OAuthUrl": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "AuthStatus": {
+        "type": "object",
+        "properties": {
+          "authenticated": {
+            "type": "boolean"
+          },
+          "hasAccessToken": {
+            "type": "boolean"
+          },
+          "hasRefreshToken": {
+            "type": "boolean"
+          },
+          "expiry": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer",
+                "description": "Unix ms timestamp"
+              }
+            ]
+          }
+        },
+        "required": [
+          "authenticated",
+          "hasAccessToken",
+          "hasRefreshToken"
+        ]
+      },
+      "ExportedTokens": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expiry_date": {
+            "type": "integer"
+          },
+          "id_token": {
+            "type": "string"
+          }
+        }
+      },
+      "GmailAttachmentItem": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "contentBase64": {
+            "type": "string",
+            "description": "Standard Base64 (not URL-safe). May be empty in legacy thread."
+          }
+        },
+        "required": [
+          "filename",
+          "contentType",
+          "contentBase64"
+        ]
+      },
+      "GmailInlineItem": {
+        "$ref": "#/components/schemas/GmailAttachmentItem"
+      },
+      "GmailMessageMinimal": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "threadId"
+        ]
+      },
+      "GmailMessageFull": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "html": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "html",
+              "text"
+            ]
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GmailAttachmentItem"
+            }
+          },
+          "rawMessage": {}
+        },
+        "required": [
+          "id",
+          "threadId",
+          "body"
+        ]
+      },
+      "GmailSendAttachment": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "contentBase64": {
+            "type": "string",
+            "description": "Standard Base64"
+          }
+        },
+        "required": [
+          "filename",
+          "contentBase64"
+        ]
+      },
+      "GmailSendRequest": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Optional. RFC5322 mailbox."
+          },
+          "to": {
+            "type": "string",
+            "description": "Comma-separated recipients."
+          },
+          "subject": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "html": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GmailSendAttachment"
+            }
+          }
+        },
+        "required": [
+          "to",
+          "subject"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "html"
+            ]
+          }
+        ]
+      },
+      "GmailSendResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "labelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "threadId"
+        ]
+      },
+      "GmailReplyRequest": {
+        "type": "object",
+        "properties": {
+          "replyToMessageId": {
+            "type": "string",
+            "description": "If set, headers like In-Reply-To/References/Subject/To are inferred."
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "html": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GmailSendAttachment"
+            }
+          },
+          "inReplyTo": {
+            "type": "string"
+          },
+          "references": {
+            "type": "string"
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "replyToMessageId"
+            ]
+          },
+          {
+            "required": [
+              "threadId"
+            ]
+          }
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "html"
+            ]
+          }
+        ]
+      },
+      "GmailModifyRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "addLabels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removeLabels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "GmailModifyResponse": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "files": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "labelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "threadId",
+          "labelIds"
+        ]
+      },
+      "GmailAttachmentDownloadResponse": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "contentBase64": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "contentType",
+          "contentBase64"
+        ]
+      },
+      "GmailThreadsList": {
+        "type": "object",
+        "properties": {
+          "threads": {
             "type": "array",
             "items": {
               "type": "object",
-              "additionalProperties": true,
               "properties": {
                 "id": {
                   "type": "string"
                 },
-                "name": {
+                "historyId": {
                   "type": "string"
-                },
-                "mimeType": {
-                  "type": "string"
-                },
-                "webViewLink": {
-                  "type": "string",
-                  "format": "uri"
                 }
               },
               "required": [
-                "id",
-                "name"
+                "id"
               ]
             }
           },
           "nextPageToken": {
             "type": "string"
           }
+        }
+      },
+      "GmailThreadMeta": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "historyId": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "messagesCount": {
+            "type": "integer"
+          }
         },
         "required": [
-          "files"
+          "id",
+          "messagesCount"
         ]
       },
-      "PlacesSearchResponse": {
+      "GmailThreadV2": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "results": {
+          "id": {
+            "type": "string"
+          },
+          "historyId": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "messagesCount": {
+            "type": "integer"
+          },
+          "messages": {
             "type": "array",
             "items": {
               "type": "object",
-              "additionalProperties": true,
               "properties": {
-                "place_id": {
+                "id": {
                   "type": "string"
                 },
-                "name": {
+                "threadId": {
                   "type": "string"
                 },
-                "formatted_address": {
+                "labelIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "snippet": {
                   "type": "string"
                 },
-                "rating": {
-                  "type": "number"
+                "internalDate": {
+                  "type": "string"
+                },
+                "headers": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "cc": {
+                      "type": "string"
+                    },
+                    "bcc": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "date": {
+                      "type": "string"
+                    },
+                    "messageId": {
+                      "type": "string"
+                    },
+                    "inReplyTo": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "body": {
+                  "type": "object",
+                  "properties": {
+                    "html": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "html",
+                    "text"
+                  ]
+                },
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GmailAttachmentItem"
+                  }
+                },
+                "inline": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GmailInlineItem"
+                  }
+                },
+                "hasAttachments": {
+                  "type": "boolean"
+                },
+                "attachmentsCount": {
+                  "type": "integer"
+                },
+                "hasInline": {
+                  "type": "boolean"
+                },
+                "inlineCount": {
+                  "type": "integer"
+                },
+                "raw": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
-                "place_id",
-                "name"
+                "id",
+                "threadId",
+                "body"
               ]
             }
           }
         },
         "required": [
-          "results"
+          "id",
+          "messagesCount"
         ]
       },
-      "PlaceDetailsResponse": {
+      "DriveFile": {
         "type": "object",
-        "additionalProperties": true,
         "properties": {
-          "result": {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "place_id": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "formatted_address": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string",
-                "format": "uri"
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "modifiedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "displayName": {
+                  "type": "string"
+                },
+                "emailAddress": {
+                  "type": "string",
+                  "format": "email"
+                }
               }
             }
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string"
           }
-        },
-        "required": [
-          "result"
-        ]
+        }
+      },
+      "PlacesSearchResponse": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lng": {
+            "type": "number"
+          },
+          "radius": {
+            "type": "integer"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaceDetails"
+            }
+          }
+        }
+      },
+      "PlaceDetails": {
+        "type": "object",
+        "properties": {
+          "place_name": {
+            "type": "string",
+            "description": "Places API resource name"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "user_ratings_total": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "open_weekdays": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "location": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "lng": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       },
       "AgentCommandRequest": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "text": {
-            "type": "string",
-            "description": "Polecenie w j�zyku naturalnym"
-          },
-          "context": {
-            "type": "object",
-            "additionalProperties": true
+            "type": "string"
           }
         },
         "required": [
@@ -1224,34 +3225,49 @@
       },
       "AgentCommandResponse": {
         "type": "object",
-        "additionalProperties": true,
         "properties": {
-          "ok": {
-            "type": "boolean"
+          "action": {
+            "type": "string"
           },
-          "actions": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          },
-          "message": {
+          "request": {},
+          "result": {},
+          "say": {
             "type": "string"
           }
-        },
-        "required": [
-          "ok"
-        ]
+        }
       },
       "CalendarCreateRequest": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "summary": {
             "type": "string"
           },
+          "title": {
+            "type": "string",
+            "description": "Alias for summary"
+          },
+          "description": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "tz": {
+            "type": "string",
+            "default": "Europe/Warsaw"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "startISO": {
+            "type": "string",
+            "format": "date-time"
+          },
           "start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endISO": {
             "type": "string",
             "format": "date-time"
           },
@@ -1259,186 +3275,287 @@
             "type": "string",
             "format": "date-time"
           },
-          "location": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
+          "durationMin": {
+            "type": "integer",
+            "default": 30
           },
           "attendees": {
             "type": "array",
             "items": {
-              "type": "string",
-              "format": "email"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "string",
+                      "format": "email"
+                    }
+                  },
+                  "required": [
+                    "email"
+                  ]
+                }
+              ]
             }
-          },
-          "startISO": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Alias of `start` accepted by backend examples"
-          },
-          "endISO": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Alias of `end` accepted by backend examples"
-          },
-          "tz": {
-            "type": "string",
-            "description": "Timezone, e.g., Europe/Warsaw"
           },
           "conference": {
             "type": "string",
-            "enum": [
-              "true",
-              "false"
-            ],
-            "description": "Create conference link (string flag)"
+            "description": "If 'true', create Google Meet"
           }
         },
-        "required": [
-          "summary",
-          "start",
-          "end"
-        ]
+        "description": "Creates an event on primary calendar. If `end`/`endISO` absent, uses start+durationMin.\n"
       },
       "CalendarCreateResponse": {
         "type": "object",
-        "additionalProperties": true,
         "properties": {
           "id": {
             "type": "string"
           },
           "htmlLink": {
-            "type": "string",
-            "format": "uri"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "CalendarListResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "events": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true,
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "summary": {
-                  "type": "string"
-                },
-                "start": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "end": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "location": {
-                  "type": "string"
-                },
-                "htmlLink": {
-                  "type": "string",
-                  "format": "uri"
-                }
-              },
-              "required": [
-                "id",
-                "summary",
-                "start",
-                "end"
-              ]
-            }
-          },
-          "nextPageToken": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "events"
-        ]
-      },
-      "CalendarNotificationResponse": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "channelId": {
             "type": "string"
           },
-          "resourceId": {
+          "hangoutLink": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start": {},
+          "end": {},
+          "summary": {
             "type": "string"
           }
         },
         "required": [
-          "ok"
+          "id",
+          "htmlLink",
+          "start",
+          "end"
         ]
       },
-      "CalendarQuickAddRequest": {
+      "CalendarListItem": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "text": {
-            "type": "string",
-            "description": "Naturalny opis zdarzenia, np. 'Meeting tomorrow 2pm'"
-          }
-        },
-        "required": [
-          "text"
-        ]
-      },
-      "CalendarQuickAddResponse": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-          "eventId": {
+          "id": {
             "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "start": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "htmlLink": {
-            "type": "string",
-            "format": "uri"
-          }
-        },
-        "required": [
-          "eventId"
-        ]
-      }
-    },
-    "securitySchemes": {
-      "adminToken": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "x-admin-token",
-        "description": "Admin token for privileged endpoints."
-      },
-      "oauth2": {
-        "type": "oauth2",
-        "description": "Google OAuth2 Authorization Code flow",
-        "flows": {
-          "authorizationCode": {
-            "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
-            "tokenUrl": "https://oauth2.googleapis.com/token",
-            "scopes": {
-              "https://www.googleapis.com/auth/userinfo.email": "Basic user info",
-              "https://www.googleapis.com/auth/gmail.modify": "Gmail modify",
-              "https://www.googleapis.com/auth/gmail.send": "Gmail send",
-              "https://www.googleapis.com/auth/drive.readonly": "Drive read only",
-              "https://www.googleapis.com/auth/calendar": "Calendar access",
-              "https://www.googleapis.com/auth/places": "Places access"
-            }
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }
+    },
+    "examples": {
+      "GmailLabelList": {
+        "summary": "Example labels response",
+        "value": [
+          {
+            "id": "INBOX",
+            "name": "INBOX",
+            "type": "system"
+          },
+          {
+            "id": "STARRED",
+            "name": "STARRED",
+            "type": "system"
+          }
+        ]
+      },
+      "GmailMessagesList": {
+        "summary": "Example list of messages (summary view)",
+        "value": [
+          {
+            "id": "19913f5fbd4cb5fc",
+            "threadId": "19913f5fbd4cb5fc",
+            "snippet": "Hello from Alice…"
+          },
+          {
+            "id": "19913ecf868a469e",
+            "threadId": "19913ecf868a469e",
+            "snippet": "Invoice attached"
+          }
+        ]
+      },
+      "GmailThreadExpanded": {
+        "summary": "Example expanded thread (expand=1)",
+        "value": {
+          "id": "19913f5fbd4cb5fc",
+          "historyId": "123456",
+          "snippet": "Hello from Alice…",
+          "messagesCount": 1,
+          "messages": [
+            {
+              "id": "19913f5fbd4cb5fc",
+              "threadId": "19913f5fbd4cb5fc",
+              "labelIds": [
+                "INBOX"
+              ],
+              "snippet": "Hello from Alice…",
+              "headers": {
+                "from": "Alice <alice@example.com>",
+                "to": "You <you@gmail.com>",
+                "cc": "",
+                "bcc": "",
+                "subject": "Sample message",
+                "date": "Fri, 06 Sep 2025 10:00:00 +0200",
+                "messageId": "<abc@id>",
+                "inReplyTo": ""
+              },
+              "body": {
+                "text": "Hi!",
+                "html": "<p>Hi!</p>"
+              },
+              "attachments": [
+                {
+                  "filename": "invoice.pdf",
+                  "contentType": "application/pdf",
+                  "contentBase64": "JVBERi0x..."
+                }
+              ],
+              "inline": [],
+              "hasAttachments": true,
+              "attachmentsCount": 1,
+              "hasInline": false,
+              "inlineCount": 0
+            }
+          ]
+        }
+      },
+      "CalendarCreateRequest": {
+        "summary": "Minimal event request",
+        "value": {
+          "summary": "SMOKE TEST",
+          "start": "2025-09-08T10:00:00Z",
+          "end": "2025-09-08T10:30:00Z",
+          "description": "Created by API",
+          "location": "Google Meet"
+        }
+      },
+      "CalendarCreateResponse": {
+        "summary": "Minimal event response",
+        "value": {
+          "id": "evt_123",
+          "htmlLink": "https://calendar.google.com/event?eid=..."
+        }
+      },
+      "CalendarListResponse": {
+        "summary": "Events for next 24h",
+        "value": [
+          {
+            "id": "evt_123",
+            "start": "2025-09-08T10:00:00Z",
+            "end": "2025-09-08T10:30:00Z",
+            "summary": "Daily standup",
+            "location": "Meet"
+          },
+          {
+            "id": "evt_124",
+            "start": "2025-09-08T13:00:00Z",
+            "end": "2025-09-08T13:30:00Z",
+            "summary": "Check-in",
+            "location": "Office"
+          }
+        ]
+      },
+      "GmailModifyRequest": {
+        "summary": "Modify message (add/remove labels)",
+        "value": {
+          "id": "19913f5fbd4cb5fc",
+          "addLabels": [
+            "STARRED",
+            "UNREAD"
+          ],
+          "removeLabels": []
+        }
+      },
+      "GmailModifyResponse": {
+        "summary": "Modify result",
+        "value": {
+          "id": "19913f5fbd4cb5fc",
+          "threadId": "19913f5fbd4cb5fc",
+          "labelIds": [
+            "STARRED",
+            "UNREAD"
+          ]
+        }
+      },
+      "GmailMarkAsUnreadRequest": {
+        "summary": "Mark single message as UNREAD",
+        "value": {
+          "id": "19913f5fbd4cb5fc"
+        }
+      },
+      "GmailMarkAsUnreadResponse": {
+        "summary": "After markAsUnread",
+        "value": {
+          "id": "19913f5fbd4cb5fc",
+          "threadId": "19913f5fbd4cb5fc",
+          "labelIds": [
+            "UNREAD"
+          ]
+        }
+      },
+      "GmailThreadRawResponse": {
+        "summary": "Thread with raw payloads (raw=1)",
+        "value": {
+          "id": "19913f5fbd4cb5fc",
+          "historyId": "123456",
+          "snippet": "Hello from Alice…",
+          "messagesCount": 1,
+          "messages": [
+            {
+              "id": "19913f5fbd4cb5fc",
+              "threadId": "19913f5fbd4cb5fc",
+              "labelIds": [
+                "INBOX"
+              ],
+              "snippet": "",
+              "internalDate": "1757090000000",
+              "headers": {
+                "from": "Alice <alice@example.com>",
+                "to": "You <you@gmail.com>",
+                "cc": "",
+                "bcc": "",
+                "subject": "Sample message (raw)",
+                "date": "Fri, 06 Sep 2025 10:00:00 +0200",
+                "messageId": "<abc@id>",
+                "inReplyTo": ""
+              },
+              "raw": "SGVsbG8="
+            }
+          ]
+        }
+      }
     }
-  },
-  "security": []
+  }
 }
