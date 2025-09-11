@@ -1398,75 +1398,6 @@ components:
       required:
         - id
         - threadId
-    GmailAttachment:
-      type: object
-      properties:
-        filename:
-          type: string
-        contentType:
-          type: string
-        contentBase64:
-          type: string
-          description: base64
-    GmailMessageDetail:
-      type: object
-      properties:
-        id:
-          type: string
-        threadId:
-          type: string
-        labelIds:
-          type: array
-          items:
-            type: string
-        snippet:
-          type: string
-        headers:
-          type: object
-          properties:
-            from:
-              type: string
-            to:
-              type: string
-            cc:
-              type: string
-            bcc:
-              type: string
-            subject:
-              type: string
-            date:
-              type: string
-            messageId:
-              type: string
-            inReplyTo:
-              type: string
-        body:
-          type: object
-          properties:
-            html:
-              type: string
-            text:
-              type: string
-        attachments:
-          type: array
-          items:
-            $ref: "#/components/schemas/GmailAttachment"
-        inline:
-          type: array
-          items:
-            $ref: "#/components/schemas/GmailAttachment"
-        hasAttachments:
-          type: boolean
-        attachmentsCount:
-          type: integer
-        hasInline:
-          type: boolean
-        inlineCount:
-          type: integer
-        raw:
-          oneOf:
-            - type: "null"
-            - type: string
     CalendarEvent:
       type: object
       properties:
@@ -1963,51 +1894,6 @@ components:
           description: If 'true', create Google Meet
       description: |
         Creates an event on primary calendar. If `end`/`endISO` absent, uses start+durationMin.
-    CalendarCreateResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        htmlLink:
-          type: string
-        hangoutLink:
-          type:
-            - string
-            - "null"
-        start: {}
-        end: {}
-        summary:
-          type: string
-      required:
-        - id
-        - htmlLink
-        - start
-        - end
-    CalendarListItem:
-      type: object
-      properties:
-        id:
-          type: string
-        status:
-          type: string
-        summary:
-          type: string
-        description:
-          type: string
-        location:
-          type: string
-        start:
-          type:
-            - string
-            - "null"
-        end:
-          type:
-            - string
-            - "null"
-        htmlLink:
-          type:
-            - string
-            - "null"
     GmailMessage:
       type: object
       additionalProperties: true
@@ -2173,7 +2059,13 @@ components:
               messageId: <abc@id>
               inReplyTo: ""
             raw: SGVsbG8=
-  responses: {}
+  responses:
+    Error400:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 tags:
   - name: Root
     description: Informacje o serwerze i metadane.
