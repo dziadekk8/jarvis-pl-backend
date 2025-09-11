@@ -912,7 +912,6 @@ paths:
                   to: user@example.com
                   subject: Hello
                   text: Hi there!
-                  html: <p>Hi there!</p>
       responses:
         "200":
           description: Sent message info
@@ -958,8 +957,6 @@ paths:
                 value:
                   replyToMessageId: 1872e5f8f23...
                   text: Thanks!
-                  threadId: 19913f5fbd4cb5fc
-                  html: <p>Thanks!</p>
       responses:
         "200":
           description: Sent reply info
